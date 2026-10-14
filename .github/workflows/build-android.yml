@@ -1,4 +1,3 @@
-
 name: CepAsistan Android APK
 
 on:
@@ -30,12 +29,14 @@ jobs:
       - name: Flutter projesini oluştur
         run: flutter create --org com.cepasistan --project-name cep_asistan _build
 
-      - name: Uygulama kodunu aktar
-        run: cp lib/main.dart _build/lib/main.dart
+      - name: Uygulama kodunu ve ayarları aktar
+        run: |
+          cp lib/main.dart _build/lib/main.dart
+          cp pubspec.yaml _build/pubspec.yaml
 
       - name: Paketleri kur
         working-directory: _build
-        run: flutter pub add shared_preferences
+        run: flutter pub get
 
       - name: Kod analizi
         working-directory: _build
@@ -52,4 +53,3 @@ jobs:
           path: _build/build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 7
-          
