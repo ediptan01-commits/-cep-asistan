@@ -6,9 +6,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'lib/**'
-      - '.github/workflows/build-android.yml'
 
 permissions:
   contents: read
@@ -38,13 +35,11 @@ jobs:
 
       - name: Paketleri kur
         working-directory: _build
-        run: |
-          flutter pub add shared_preferences
-          flutter pub get
+        run: flutter pub add shared_preferences
 
       - name: Kod analizi
         working-directory: _build
-        run: flutter analyze
+        run: flutter analyze lib
 
       - name: Android APK oluştur
         working-directory: _build
