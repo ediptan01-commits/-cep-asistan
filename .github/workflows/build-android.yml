@@ -1,0 +1,60 @@
+
+name: CepAsistan Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'lib/**'
+      - '.github/workflows/build-android.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Kaynak kodunu al
+        uses: actions/checkout@v4
+
+      - name: Flutter kur
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter sürümünü kontrol et
+        run: flutter --version
+
+      - name: Flutter projesini oluştur
+        run: flutter create --org com.cepasistan --project-name cep_asistan _build
+
+      - name: Uygulama kodunu aktar
+        run: cp lib/main.dart _build/lib/main.dart
+
+      - name: Paketleri kur
+        working-directory: _build
+        run: |
+          flutter pub add shared_preferences
+          flutter pub get
+
+      - name: Kod analizi
+        working-directory: _build
+        run: flutter analyze
+
+      - name: Android APK oluştur
+        working-directory: _build
+        run: flutter build apk --debug
+
+      - name: APK dosyasını yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: CepAsistan-Android-APK
+          path: _build/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+          
