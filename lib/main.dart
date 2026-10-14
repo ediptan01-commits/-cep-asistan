@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -127,6 +128,7 @@ class _AiPageState extends State<AiPage> { final input=TextEditingController(); 
 
 class ProPage extends StatefulWidget { final void Function(String) onMessage; const ProPage({super.key,required this.onMessage}); @override State<ProPage> createState()=>_ProPageState(); }
 class _ProPageState extends State<ProPage> { final iap=InAppPurchase.instance; bool available=false, busy=false; List<ProductDetails> products=[]; @override void initState(){super.initState();_load();} Future<void> _load() async { available=await iap.isAvailable(); if(available){final r=await iap.queryProductDetails({monthlyProductId,yearlyProductId}); products=r.productDetails; iap.purchaseStream.listen((events){for(final p in events){if(p.status==PurchaseStatus.purchased||p.status==PurchaseStatus.restored){widget.onMessage('Satın alma mağazadan bildirildi. Üretimde sunucu taraflı makbuz doğrulaması eklenmeden Pro erişimi açılmamalıdır.');} if(p.pendingCompletePurchase) iap.completePurchase(p);}});} if(mounted)setState(()=>busy=false); } @override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(16),children:[const Icon(Icons.workspace_premium,color:Colors.amber,size:60),const Text('CepAsistan Pro',textAlign:TextAlign.center,style:TextStyle(fontSize:24,fontWeight:FontWeight.bold)),const SizedBox(height:8),const Text('Daha yüksek yapay zekâ kotası ve gelişmiş araçlar.',textAlign:TextAlign.center),const SizedBox(height:18),const ListTile(leading:Icon(Icons.check_circle,color:Colors.green),title:Text('Ücretsiz temel araçlar her zaman kullanılabilir')),const ListTile(leading:Icon(Icons.check_circle,color:Colors.green),title:Text('Pro ile daha yüksek AI kullanım kotası')),if(!available)const Text('Mağaza satın alımları şu anda kullanılamıyor.'),if(available&&products.isEmpty)const Text('Mağaza ürünleri bulunamadı. Play Console / App Store Connect ürün kimliklerini yapılandır.'),...products.map((p)=>FilledButton(onPressed:busy?null:() async {setState(()=>busy=true); await iap.buyNonConsumable(purchaseParam:PurchaseParam(productDetails:p)); if(mounted)setState(()=>busy=false);},child:Text('${p.title} · ${p.price}'))),OutlinedButton(onPressed:() async {await iap.restorePurchases();widget.onMessage('Satın alma geri yükleme isteği gönderildi.');},child:const Text('Satın alımları geri yükle')),const SizedBox(height:12),const Text('Not: Gerçek Pro erişimi için mağaza makbuzunu sunucuda doğrulayın. Bu ekran tek başına güvenli abonelik doğrulaması sağlamaz.',style:TextStyle(fontSize:12,color:Colors.grey))]); }
+
 
 
 
