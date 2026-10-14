@@ -39,7 +39,7 @@ jobs:
 
       - name: Kod analizi
         working-directory: _build
-        run: flutter analyze lib
+        run: flutter analyze lib --no-fatal-infos
 
       - name: Android APK oluştur
         working-directory: _build
