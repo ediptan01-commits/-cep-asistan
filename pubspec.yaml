@@ -1,0 +1,29 @@
+name: cep_asistan
+description: CepAsistan mobile app (Android and iOS).
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.10.0 <4.0.0'
+  flutter: '>=3.38.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.5.3
+  flutter_local_notifications: ^20.1.0
+  timezone: ^0.11.2
+  image_picker: ^1.2.3
+  pdf: ^3.11.3
+  path_provider: ^2.1.6
+  share_plus: ^12.0.2
+  http: ^1.6.0
+  in_app_purchase: ^3.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
