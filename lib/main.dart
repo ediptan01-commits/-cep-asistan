@@ -1,826 +1,120 @@
-
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
+import 'package:timezone/timezone.dart' as tz;
+import 'package:image_picker/image_picker.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:pdf/pdf.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:http/http.dart' as http;
+import 'package:in_app_purchase/in_app_purchase.dart';
+
+const navy = Color(0xFF183153);
+const aiEndpoint = String.fromEnvironment('AI_ENDPOINT', defaultValue: 'https://YOUR-SERVER.example.com/chat');
+const monthlyProductId = 'cepasistan_pro_monthly';
+const yearlyProductId = 'cepasistan_pro_yearly';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  tzdata.initializeTimeZones();
+  // Turkey local time. Change this if distributing primarily in another timezone.
+  tz.setLocalLocation(tz.getLocation('Europe/Istanbul'));
   runApp(const CepAsistanApp());
 }
 
 class CepAsistanApp extends StatelessWidget {
   const CepAsistanApp({super.key});
-
   @override
-  Widget build(BuildContext context) {
-    const navy = Color(0xFF183153);
-
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'CepAsistan',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: navy,
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF5F7FB),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFFF5F7FB),
-          foregroundColor: navy,
-          elevation: 0,
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide.none,
-          ),
-        ),
-      ),
-      home: const CepHome(),
-    );
-  }
-}
-
-class CepHome extends StatefulWidget {
-  const CepHome({super.key});
-
-  @override
-  State<CepHome> createState() => _CepHomeState();
-}
-
-class _CepHomeState extends State<CepHome> {
-  int page = 0;
-  bool loading = true;
-
-  List<Map<String, dynamic>> notes = [];
-  List<Map<String, dynamic>> tasks = [];
-
-  @override
-  void initState() {
-    super.initState();
-    loadData();
-  }
-
-  Future<void> loadData() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    try {
-      final savedNotes = jsonDecode(prefs.getString('notes') ?? '[]');
-      final savedTasks = jsonDecode(prefs.getString('tasks') ?? '[]');
-
-      if (savedNotes is List && savedTasks is List) {
-        notes = savedNotes
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-
-        tasks = savedTasks
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-      }
-    } catch (_) {
-      notes = [];
-      tasks = [];
-    }
-
-    if (mounted) {
-      setState(() => loading = false);
-    }
-  }
-
-  Future<void> saveData() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('notes', jsonEncode(notes));
-    await prefs.setString('tasks', jsonEncode(tasks));
-  }
-
-  void message(String text) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text)));
-  }
-
-  Future<void> addNote() async {
-    final title = TextEditingController();
-    final body = TextEditingController();
-
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Yeni not'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: title,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  hintText: 'Not başlığı',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: body,
-                minLines: 3,
-                maxLines: 5,
-                decoration: const InputDecoration(
-                  hintText: 'Notunu buraya yaz...',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Vazgeç'),
-          ),
-          FilledButton(
-            onPressed: () {
-              if (title.text.trim().isEmpty &&
-                  body.text.trim().isEmpty) {
-                return;
-              }
-              Navigator.pop(dialogContext, true);
-            },
-            child: const Text('Kaydet'),
-          ),
-        ],
-      ),
-    );
-
-    if (result == true && mounted) {
-      setState(() {
-        notes.insert(0, {
-          'title': title.text.trim().isEmpty
-              ? 'Başlıksız not'
-              : title.text.trim(),
-          'body': body.text.trim(),
-          'date': DateTime.now().toIso8601String(),
-        });
-      });
-      await saveData();
-      message('Not kaydedildi.');
-    }
-
-    title.dispose();
-    body.dispose();
-  }
-
-  Future<void> addTask() async {
-    final controller = TextEditingController();
-
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Yeni görev'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'Örn. Faturayı öde',
-          ),
-          onSubmitted: (_) {
-            if (controller.text.trim().isNotEmpty) {
-              Navigator.pop(dialogContext, true);
-            }
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Vazgeç'),
-          ),
-          FilledButton(
-            onPressed: () {
-              if (controller.text.trim().isNotEmpty) {
-                Navigator.pop(dialogContext, true);
-              }
-            },
-            child: const Text('Ekle'),
-          ),
-        ],
-      ),
-    );
-
-    if (result == true && mounted) {
-      setState(() {
-        tasks.insert(0, {
-          'title': controller.text.trim(),
-          'done': false,
-        });
-      });
-      await saveData();
-      message('Görev eklendi.');
-    }
-
-    controller.dispose();
-  }
-
-  Future<void> deleteItem(bool isNote, int index) async {
-    setState(() {
-      if (isNote) {
-        notes.removeAt(index);
-      } else {
-        tasks.removeAt(index);
-      }
-    });
-    await saveData();
-    message('Silindi.');
-  }
-
-
-Widget card({
-  required IconData icon,
-  required String title,
-  required String subtitle,
-  required Color color,
-  required VoidCallback onTap,
-}) {
-  return Card(
-    elevation: 0,
-    color: Colors.white,
-    clipBehavior: Clip.antiAlias,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(18),
-    ),
-    child: InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(13),
-              ),
-              child: Icon(icon, color: color, size: 24),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Colors.grey.shade600,
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'CepAsistan', debugShowCheckedModeBanner: false,
+    theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: navy), scaffoldBackgroundColor: const Color(0xFFF5F7FB)),
+    home: const HomePage(),
   );
 }
-  
 
-  Widget dashboard() {
-    final pending = tasks.where((t) => t['done'] != true).length;
-
-    return ListView(
-      padding: const EdgeInsets.all(18),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF183153), Color(0xFF3266A8)],
-            ),
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Günlük hayatın, tek yerde.',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '$pending bekleyen görev · ${notes.length} kayıtlı not',
-                style: const TextStyle(color: Colors.white70),
-              ),
-              const SizedBox(height: 18),
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF183153),
-                ),
-                onPressed: addTask,
-                icon: const Icon(Icons.add),
-                label: const Text('Görev ekle'),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 22),
-        const Text(
-          'Araçların',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 10),
-        GridView.count(
-          crossAxisCount: 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          childAspectRatio: 0.95,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          children: [
-            card(
-              icon: Icons.note_alt_outlined,
-              title: 'Notlarım',
-              subtitle: '${notes.length} kayıt',
-              color: const Color(0xFF2674C8),
-              onTap: () => setState(() => page = 1),
-            ),
-            card(
-              icon: Icons.check_circle_outline,
-              title: 'Görevlerim',
-              subtitle: '$pending bekleyen',
-              color: const Color(0xFF27966A),
-              onTap: () => setState(() => page = 2),
-            ),
-            card(
-              icon: Icons.calculate_outlined,
-              title: 'Hesap makinesi',
-              subtitle: 'Hızlı hesapla',
-              color: const Color(0xFFE49A2D),
-              onTap: () => setState(() => page = 3),
-            ),
-            card(
-              icon: Icons.swap_horiz,
-              title: 'Birim dönüştür',
-              subtitle: 'Uzunluk ve ağırlık',
-              color: const Color(0xFF8C56C8),
-              onTap: () => setState(() => page = 3),
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        Card(
-          elevation: 0,
-          child: ListTile(
-            leading: const Icon(Icons.auto_awesome, color: Color(0xFF3266A8)),
-            title: const Text('Yapay zekâ asistanı'),
-            subtitle: const Text('Yakında kullanıma açılacak'),
-            trailing: const Icon(Icons.lock_outline),
-          ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'CepAsistan · Ücretsiz sürüm',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.grey, fontSize: 12),
-        ),
-      ],
-    );
+class Store {
+  static final Store instance = Store._();
+  Store._();
+  SharedPreferences? _prefs;
+  Future<void> init() async { _prefs = await SharedPreferences.getInstance(); }
+  List<Map<String, dynamic>> list(String key) {
+    try { final raw = jsonDecode(_prefs?.getString(key) ?? '[]'); return (raw as List).whereType<Map>().map((e) => Map<String,dynamic>.from(e)).toList(); } catch (_) { return []; }
   }
-
-  Widget notesPage() {
-    if (notes.isEmpty) {
-      return const Center(
-        child: Text('Henüz notun yok.\n+ düğmesiyle ilk notunu ekle.',
-            textAlign: TextAlign.center),
-      );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: notes.length,
-      itemBuilder: (context, index) {
-        final note = notes[index];
-        return Card(
-          elevation: 0,
-          color: Colors.white,
-          margin: const EdgeInsets.only(bottom: 10),
-          child: ListTile(
-            leading: const Icon(Icons.sticky_note_2_outlined),
-            title: Text(note['title']?.toString() ?? 'Not'),
-            subtitle: Text(
-              note['body']?.toString() ?? '',
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-            ),
-            trailing: IconButton(
-              tooltip: 'Notu sil',
-              icon: const Icon(Icons.delete_outline),
-              onPressed: () => deleteItem(true, index),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget tasksPage() {
-    if (tasks.isEmpty) {
-      return const Center(
-        child: Text('Henüz görevin yok.\n+ düğmesiyle görev ekle.',
-            textAlign: TextAlign.center),
-      );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: tasks.length,
-      itemBuilder: (context, index) {
-        final task = tasks[index];
-        final done = task['done'] == true;
-
-        return Card(
-          elevation: 0,
-          color: Colors.white,
-          margin: const EdgeInsets.only(bottom: 8),
-          child: CheckboxListTile(
-            value: done,
-            title: Text(
-              task['title']?.toString() ?? '',
-              style: TextStyle(
-                decoration: done ? TextDecoration.lineThrough : null,
-                color: done ? Colors.grey : null,
-              ),
-            ),
-            onChanged: (value) async {
-              setState(() => task['done'] = value ?? false);
-              await saveData();
-            },
-            secondary: IconButton(
-              tooltip: 'Görevi sil',
-              icon: const Icon(Icons.delete_outline),
-              onPressed: () => deleteItem(false, index),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget toolsPage() {
-    return ListView(
-      padding: const EdgeInsets.all(18),
-      children: const [
-        Text(
-          'Günlük araçlar',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-        ),
-        SizedBox(height: 14),
-        CalculatorTool(),
-        SizedBox(height: 18),
-        ConverterTool(),
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final titles = ['CepAsistan', 'Notlarım', 'Görevlerim', 'Araçlar'];
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          titles[page],
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          if (page == 1 || page == 2)
-            IconButton(
-              tooltip: 'Ekle',
-              onPressed: page == 1 ? addNote : addTask,
-              icon: const Icon(Icons.add_circle_outline),
-            ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : IndexedStack(
-              index: page,
-              children: [
-                dashboard(),
-                notesPage(),
-                tasksPage(),
-                toolsPage(),
-              ],
-            ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: page,
-        onDestinationSelected: (index) => setState(() => page = index),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Ana sayfa',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.note_alt_outlined),
-            selectedIcon: Icon(Icons.note_alt),
-            label: 'Notlar',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.task_alt_outlined),
-            selectedIcon: Icon(Icons.task_alt),
-            label: 'Görevler',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.grid_view_outlined),
-            selectedIcon: Icon(Icons.grid_view),
-            label: 'Araçlar',
-          ),
-        ],
-      ),
-    );
-  }
+  Future<void> put(String key, List<Map<String,dynamic>> value) async => _prefs?.setString(key, jsonEncode(value));
+  int get aiUses => _prefs?.getInt('ai_uses') ?? 0;
+  Future<void> setAiUses(int n) async => _prefs?.setInt('ai_uses', n);
+  bool get isPro => _prefs?.getBool('is_pro_demo') ?? false;
+  Future<void> setProDemo(bool v) async => _prefs?.setBool('is_pro_demo', v);
 }
 
-class CalculatorTool extends StatefulWidget {
-  const CalculatorTool({super.key});
-
-  @override
-  State<CalculatorTool> createState() => _CalculatorToolState();
-}
-
-class _CalculatorToolState extends State<CalculatorTool> {
-  final first = TextEditingController();
-  final second = TextEditingController();
-  String operation = '+';
-  String result = '';
-
-  void calculate() {
-    final a = double.tryParse(first.text.replaceAll(',', '.'));
-    final b = double.tryParse(second.text.replaceAll(',', '.'));
-
-    if (a == null || b == null) {
-      setState(() => result = 'Geçerli iki sayı gir.');
-      return;
-    }
-
-    double answer;
-    switch (operation) {
-      case '-':
-        answer = a - b;
-      case '×':
-        answer = a * b;
-      case '÷':
-        if (b == 0) {
-          setState(() => result = 'Sıfıra bölünemez.');
-          return;
-        }
-        answer = a / b;
-      default:
-        answer = a + b;
-    }
-
-    setState(() {
-      result = 'Sonuç: ${answer.toStringAsPrecision(10)
-          .replaceAll(RegExp(r'\.?0+$'), '')}';
-    });
+class NotifyService {
+  static final plugin = FlutterLocalNotificationsPlugin();
+  static Future<void> init() async {
+    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const ios = DarwinInitializationSettings(requestAlertPermission: true, requestBadgePermission: true, requestSoundPermission: true);
+    await plugin.initialize(const InitializationSettings(android: android, iOS: ios));
+    await plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.requestNotificationsPermission();
   }
-
-  @override
-  void dispose() {
-    first.dispose();
-    second.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Hesap makinesi',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: first,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'Birinci sayı'),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const Text('İşlem'),
-                const SizedBox(width: 12),
-                DropdownButton<String>(
-                  value: operation,
-                  items: ['+', '-', '×', '÷']
-                      .map((op) => DropdownMenuItem(
-                            value: op,
-                            child: Text(op),
-                          ))
-                      .toList(),
-                  onChanged: (value) {
-                    if (value != null) setState(() => operation = value);
-                  },
-                ),
-              ],
-            ),
-            TextField(
-              controller: second,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'İkinci sayı'),
-              onSubmitted: (_) => calculate(),
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: calculate,
-              child: const Text('Hesapla'),
-            ),
-            if (result.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              SelectableText(
-                result,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
+  static Future<void> schedule(Map<String,dynamic> item) async {
+    final date = DateTime.tryParse(item['when']?.toString() ?? '');
+    if (date == null || !date.isAfter(DateTime.now())) return;
+    await plugin.zonedSchedule(
+      (item['id'] as num).toInt(), item['title']?.toString() ?? 'CepAsistan hatırlatıcı', item['body']?.toString() ?? 'Hatırlatma zamanı geldi.',
+      tz.TZDateTime.from(date, tz.local),
+      const NotificationDetails(android: AndroidNotificationDetails('cepasistan_reminders', 'Hatırlatıcılar', channelDescription: 'Planladığınız işler için bildirimler', importance: Importance.max, priority: Priority.high), iOS: DarwinNotificationDetails()),
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
     );
   }
+  static Future<void> cancel(int id) => plugin.cancel(id);
 }
 
-class ConverterTool extends StatefulWidget {
-  const ConverterTool({super.key});
-
-  @override
-  State<ConverterTool> createState() => _ConverterToolState();
+class HomePage extends StatefulWidget { const HomePage({super.key}); @override State<HomePage> createState() => _HomePageState(); }
+class _HomePageState extends State<HomePage> {
+  int tab = 0; bool loading = true;
+  List<Map<String,dynamic>> notes = [], tasks = [], reminders = [], transactions = [];
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async {
+    await Store.instance.init(); await NotifyService.init();
+    notes = Store.instance.list('notes'); tasks = Store.instance.list('tasks'); reminders = Store.instance.list('reminders'); transactions = Store.instance.list('transactions');
+    if (mounted) setState(() => loading = false);
+  }
+  Future<void> _saveAll() async { await Store.instance.put('notes', notes); await Store.instance.put('tasks', tasks); await Store.instance.put('reminders', reminders); await Store.instance.put('transactions', transactions); if (mounted) setState(() {}); }
+  void _msg(String s) { if (!mounted) return; ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s))); }
+  Future<String?> _textDialog(String title, String hint, {String initial = ''}) async { final c = TextEditingController(text: initial); final v = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(title: Text(title), content: TextField(controller: c, autofocus: true, maxLines: 4, decoration: InputDecoration(hintText: hint)), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Vazgeç')), FilledButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: const Text('Kaydet'))])); c.dispose(); return v; }
+  Future<void> _addNote() async { final title = await _textDialog('Yeni not', 'Not başlığı'); if (title == null || title.isEmpty) return; final body = await _textDialog('Not içeriği', 'Notunu yaz'); notes.insert(0, {'id': DateTime.now().millisecondsSinceEpoch, 'title': title, 'body': body ?? '', 'date': DateTime.now().toIso8601String()}); await _saveAll(); }
+  Future<void> _addTask() async { final title = await _textDialog('Yeni görev', 'Örn. Faturayı öde'); if (title == null || title.isEmpty) return; tasks.insert(0, {'id': DateTime.now().millisecondsSinceEpoch, 'title': title, 'done': false}); await _saveAll(); }
+  Future<void> _addReminder() async {
+    final title = await _textDialog('Hatırlatıcı', 'Ne hatırlatılsın?'); if (title == null || title.isEmpty) return;
+    final date = await showDatePicker(context: context, initialDate: DateTime.now().add(const Duration(hours: 1)), firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 3650))); if (date == null || !mounted) return;
+    final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(DateTime.now().add(const Duration(hours: 1)))); if (time == null) return;
+    final when = DateTime(date.year,date.month,date.day,time.hour,time.minute); if (!when.isAfter(DateTime.now())) { _msg('Geçmiş bir zaman seçemezsin.'); return; }
+    final item = {'id': DateTime.now().millisecondsSinceEpoch.remainder(2147483647), 'title': title, 'body': 'CepAsistan hatırlatıcın', 'when': when.toIso8601String()}; reminders.add(item); await _saveAll(); await NotifyService.schedule(item); _msg('Hatırlatıcı kaydedildi. Bildirim izinlerini açık tut.');
+  }
+  Future<void> _addTransaction() async {
+    final kind = await showModalBottomSheet<String>(context: context, builder: (ctx) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [ListTile(leading: const Icon(Icons.add_circle, color: Colors.green), title: const Text('Gelir ekle'), onTap: () => Navigator.pop(ctx, 'Gelir')), ListTile(leading: const Icon(Icons.remove_circle, color: Colors.red), title: const Text('Gider ekle'), onTap: () => Navigator.pop(ctx, 'Gider'))]))); if (kind == null) return;
+    final title = await _textDialog('$kind açıklaması', 'Örn. Maaş / Market'); if (title == null || title.isEmpty) return;
+    final raw = await _textDialog('Tutar (TL)', 'Örn. 250,50'); if (raw == null) return; final amount = double.tryParse(raw.replaceAll('.', '').replaceAll(',', '.')); if (amount == null || amount <= 0) { _msg('Geçerli bir tutar gir.'); return; }
+    transactions.insert(0, {'id': DateTime.now().millisecondsSinceEpoch, 'title': title, 'kind': kind, 'amount': amount, 'date': DateTime.now().toIso8601String()}); await _saveAll();
+  }
+  Future<void> _delete(List<Map<String,dynamic>> list, int index, {bool reminder = false}) async { final item = list.removeAt(index); if (reminder) await NotifyService.cancel((item['id'] as num).toInt()); await _saveAll(); }
+  Widget _tile(IconData icon, String title, String sub, VoidCallback tap, {Color color = navy}) => Card(elevation: 0, color: Colors.white, child: ListTile(leading: CircleAvatar(backgroundColor: color.withValues(alpha: .12), child: Icon(icon, color: color)), title: Text(title), subtitle: Text(sub), trailing: const Icon(Icons.chevron_right), onTap: tap));
+  Widget _dashboard() => ListView(padding: const EdgeInsets.all(16), children: [Container(padding: const EdgeInsets.all(22), decoration: BoxDecoration(gradient: const LinearGradient(colors: [navy, Color(0xFF3266A8)]), borderRadius: BorderRadius.circular(24)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Günlük hayatın, tek yerde.', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)), const SizedBox(height: 10), Text('${tasks.where((e)=>e['done'] != true).length} bekleyen görev · ${notes.length} not · ${reminders.length} hatırlatıcı', style: const TextStyle(color: Colors.white70)), const SizedBox(height: 16), Wrap(spacing: 8, runSpacing: 8, children: [FilledButton.icon(onPressed: _addTask, icon: const Icon(Icons.add), label: const Text('Görev ekle')), OutlinedButton.icon(style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: const BorderSide(color: Colors.white54)), onPressed: _addReminder, icon: const Icon(Icons.notifications_active_outlined), label: const Text('Hatırlatıcı'))])])), const SizedBox(height: 16), const Text('Araçların', style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold)), const SizedBox(height: 8), _tile(Icons.note_alt_outlined, 'Notlarım', '${notes.length} kayıt', () => setState(() => tab = 1), color: Colors.blue), _tile(Icons.task_alt, 'Görevlerim', '${tasks.where((e)=>e['done'] != true).length} bekleyen', () => setState(() => tab = 2), color: Colors.green), _tile(Icons.notifications_active_outlined, 'Hatırlatıcılar', '${reminders.length} kayıt', () => setState(() => tab = 3), color: Colors.deepPurple), _tile(Icons.account_balance_wallet_outlined, 'Gelir-gider', 'Bütçeni takip et', () => setState(() => tab = 4), color: Colors.orange), _tile(Icons.picture_as_pdf_outlined, 'Fotoğraftan PDF', 'Fotoğraf seç, PDF oluştur ve paylaş', _makePdf, color: Colors.red), _tile(Icons.calculate_outlined, 'Hesap makinesi ve birim dönüştürme', 'Günlük hesaplama araçları', () => setState(() => tab = 5)), _tile(Icons.auto_awesome, 'Yapay zekâ asistanı', 'Ücretsiz kota + Pro', () => setState(() => tab = 6), color: Colors.indigo), _tile(Icons.workspace_premium_outlined, 'Pro üyelik', Store.instance.isPro ? 'Pro etkin (yerel test durumu)' : 'Daha yüksek kullanım kotası', () => setState(() => tab = 7), color: Colors.amber)]);
+  Widget _listPage(String title, List<Map<String,dynamic>> data, Future<void> Function() add, {bool isTasks=false, bool isReminders=false}) => Scaffold(backgroundColor: Colors.transparent, appBar: AppBar(title: Text(title), actions: [IconButton(onPressed: add, icon: const Icon(Icons.add))]), body: data.isEmpty ? Center(child: Text('Henüz kayıt yok. + düğmesiyle ekle.')) : ListView.builder(padding: const EdgeInsets.all(12), itemCount: data.length, itemBuilder: (ctx,i) { final x=data[i]; return Card(elevation:0, color:Colors.white, child: ListTile(leading: isTasks ? Checkbox(value:x['done']==true, onChanged:(v) async { x['done']=v==true; await _saveAll(); }) : Icon(isReminders ? Icons.notifications_active_outlined : Icons.description_outlined), title: Text(x['title']?.toString() ?? ''), subtitle: Text(isReminders ? (DateTime.tryParse(x['when']?.toString() ?? '')?.toLocal().toString() ?? '') : (x['body']?.toString() ?? '')), trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed:()=>_delete(data,i, reminder:isReminders))))); }));
+  Widget _budgetPage() { final income = transactions.where((x)=>x['kind']=='Gelir').fold<double>(0,(s,x)=>s+(x['amount'] as num).toDouble()); final expense = transactions.where((x)=>x['kind']=='Gider').fold<double>(0,(s,x)=>s+(x['amount'] as num).toDouble()); return ListView(padding: const EdgeInsets.all(16), children: [Card(elevation:0, child:Padding(padding:const EdgeInsets.all(18), child:Column(crossAxisAlignment:CrossAxisAlignment.start, children:[const Text('Toplam bakiye',style:TextStyle(fontSize:16)), Text('${(income-expense).toStringAsFixed(2)} TL',style:const TextStyle(fontSize:28,fontWeight:FontWeight.bold)), Text('Gelir: ${income.toStringAsFixed(2)} TL  ·  Gider: ${expense.toStringAsFixed(2)} TL')]))), const SizedBox(height:8), FilledButton.icon(onPressed:_addTransaction, icon:const Icon(Icons.add), label:const Text('Gelir veya gider ekle')), const SizedBox(height:8), ...transactions.map((x)=>Card(elevation:0,child:ListTile(leading:Icon(x['kind']=='Gelir'?Icons.arrow_downward:Icons.arrow_upward,color:x['kind']=='Gelir'?Colors.green:Colors.red),title:Text(x['title'].toString()),subtitle:Text(x['kind'].toString()),trailing:Text('${x['kind']=='Gelir'?'+':'-'}${(x['amount'] as num).toStringAsFixed(2)} TL'))))]); }
+  Future<void> _makePdf() async { try { final image = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 90); if (image == null) return; final bytes = await image.readAsBytes(); final doc = pw.Document(); doc.addPage(pw.Page(pageFormat: PdfPageFormat.a4, build: (_) => pw.Center(child: pw.Image(pw.MemoryImage(bytes), fit: pw.BoxFit.contain)))); final out = await doc.save(); final dir = await getTemporaryDirectory(); final file = File('${dir.path}/cep_asistan_${DateTime.now().millisecondsSinceEpoch}.pdf'); await file.writeAsBytes(out); await Share.shareXFiles([XFile(file.path, mimeType:'application/pdf')], text:'CepAsistan PDF'); } catch(e) { _msg('PDF oluşturulamadı: $e'); } }
+  @override Widget build(BuildContext context) { final pages = ['CepAsistan','Notlarım','Görevlerim','Hatırlatıcılar','Gelir-gider','Araçlar','Yapay zekâ','Pro üyelik']; return Scaffold(appBar: AppBar(title: Text(pages[tab],style:const TextStyle(fontWeight:FontWeight.bold))), body: loading ? const Center(child:CircularProgressIndicator()) : IndexedStack(index:tab, children:[_dashboard(), _listPage('Notlarım',notes,_addNote), _listPage('Görevlerim',tasks,_addTask,isTasks:true), _listPage('Hatırlatıcılar',reminders,_addReminder,isReminders:true), _budgetPage(), const ToolsPage(), AiPage(onMessage:_msg), ProPage(onMessage:_msg)]), bottomNavigationBar: NavigationBar(selectedIndex: tab>3?3:tab, onDestinationSelected:(i)=>setState(()=>tab=i), destinations:const [NavigationDestination(icon:Icon(Icons.home_outlined),selectedIcon:Icon(Icons.home),label:'Ana sayfa'),NavigationDestination(icon:Icon(Icons.note_alt_outlined),label:'Notlar'),NavigationDestination(icon:Icon(Icons.task_alt_outlined),label:'Görevler'),NavigationDestination(icon:Icon(Icons.grid_view_outlined),label:'Diğer')]), floatingActionButton: tab==1 ? FloatingActionButton(onPressed:_addNote,child:const Icon(Icons.add)) : null); }
 }
 
-class _ConverterToolState extends State<ConverterTool> {
-  final amount = TextEditingController(text: '1');
-  String category = 'Uzunluk';
-  String from = 'Metre';
-  String to = 'Santimetre';
-  String result = '';
+class ToolsPage extends StatefulWidget { const ToolsPage({super.key}); @override State<ToolsPage> createState()=>_ToolsPageState(); }
+class _ToolsPageState extends State<ToolsPage> { final a=TextEditingController(), b=TextEditingController(); String op='+', result=''; final amount=TextEditingController(text:'1'); String unit='Metre'; String converted='100 Santimetre'; void calc(){final x=double.tryParse(a.text.replaceAll(',','.')), y=double.tryParse(b.text.replaceAll(',','.')); if(x==null||y==null){setState(()=>result='İki sayı gir.');return;} if(op=='÷'&&y==0){setState(()=>result='Sıfıra bölünemez.');return;} final r=op=='+'?x+y:op=='-'?x-y:op=='×'?x*y:x/y; setState(()=>result='Sonuç: $r');} void convert(){final x=double.tryParse(amount.text.replaceAll(',','.')); if(x==null){setState(()=>converted='Geçerli sayı gir.');return;} setState(()=>converted=unit=='Metre'?'${x*100} Santimetre':'${x/100} Metre');} @override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(16),children:[Card(elevation:0,child:Padding(padding:const EdgeInsets.all(16),child:Column(children:[const Text('Hesap makinesi',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold)),TextField(controller:a,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Birinci sayı')),DropdownButton<String>(value:op,items:['+','-','×','÷'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(x)=>setState(()=>op=x!)),TextField(controller:b,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'İkinci sayı')),FilledButton(onPressed:calc,child:const Text('Hesapla')),Text(result)]))),Card(elevation:0,child:Padding(padding:const EdgeInsets.all(16),child:Column(children:[const Text('Uzunluk dönüştürücü',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold)),TextField(controller:amount,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Miktar')),DropdownButton<String>(value:unit,items:const [DropdownMenuItem(value:'Metre',child:Text('Metre → Santimetre')),DropdownMenuItem(value:'Santimetre',child:Text('Santimetre → Metre'))],onChanged:(x){setState(()=>unit=x!);convert();}),FilledButton(onPressed:convert,child:const Text('Dönüştür')),Text(converted)])))]); }
 
-  final units = {
-    'Uzunluk': {
-      'Milimetre': 0.001,
-      'Santimetre': 0.01,
-      'Metre': 1.0,
-      'Kilometre': 1000.0,
-    },
-    'Ağırlık': {
-      'Gram': 0.001,
-      'Kilogram': 1.0,
-      'Ton': 1000.0,
-    },
-  };
+class AiPage extends StatefulWidget { final void Function(String) onMessage; const AiPage({super.key,required this.onMessage}); @override State<AiPage> createState()=>_AiPageState(); }
+class _AiPageState extends State<AiPage> { final input=TextEditingController(); final history=<String>[]; bool busy=false; Future<void> send() async { final text=input.text.trim(); if(text.isEmpty||busy)return; final pro=Store.instance.isPro; final used=Store.instance.aiUses; if(!pro&&used>=5){widget.onMessage('Ücretsiz günlük demo kotası doldu. Pro üyelik bölümünü incele.');return;} if(aiEndpoint.contains('YOUR-SERVER')){widget.onMessage('Yapay zekâ sunucusu henüz kurulmadı. README dosyasındaki sunucu adımlarını uygula.');return;} setState(()=>busy=true); history.add('Sen: $text'); input.clear(); try { final response=await http.post(Uri.parse(aiEndpoint),headers:{'Content-Type':'application/json'},body:jsonEncode({'message':text,'pro':pro})).timeout(const Duration(seconds:45)); if(response.statusCode==200){final data=jsonDecode(response.body); history.add('Asistan: ${data['reply'] ?? 'Yanıt alınamadı.'}'); await Store.instance.setAiUses(used+1);} else {history.add('Asistan: Sunucu hatası (${response.statusCode}).');} } catch(e){history.add('Asistan: Bağlantı kurulamadı.');} if(mounted)setState(()=>busy=false); } @override Widget build(BuildContext c)=>Column(children:[Expanded(child:history.isEmpty?const Center(child:Padding(padding:EdgeInsets.all(24),child:Text('Sorunu yaz; sunucu ayarlandıktan sonra yapay zekâ yanıtlayacak.',textAlign:TextAlign.center))):ListView(padding:const EdgeInsets.all(12),children:history.map((s)=>Card(elevation:0,child:Padding(padding:const EdgeInsets.all(12),child:Text(s)))).toList())),Padding(padding:const EdgeInsets.all(12),child:Row(children:[Expanded(child:TextField(controller:input,decoration:const InputDecoration(hintText:'Bir şey sor...'))),IconButton(onPressed:busy?null:send,icon:busy?const CircularProgressIndicator():const Icon(Icons.send))]))]); }
 
-  @override
-  void initState() {
-    super.initState();
-    calculate();
-  }
-
-  void calculate() {
-    final value = double.tryParse(amount.text.replaceAll(',', '.'));
-    final options = units[category]!;
-
-    if (value == null || !options.containsKey(from) ||
-        !options.containsKey(to)) {
-      setState(() => result = 'Geçerli bir sayı gir.');
-      return;
-       }
-
-    final converted = value * options[from]! / options[to]!;
-    setState(() {
-      result = '${converted.toStringAsPrecision(10)
-          .replaceAll(RegExp(r'\.?0+$'), '')} $to';
-    });
-  }
-
-  @override
-  void dispose() {
-    amount.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final options = units[category]!.keys.toList();
-
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Birim dönüştürücü',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: category,
-              decoration: const InputDecoration(labelText: 'Kategori'),
-              items: units.keys
-                  .map((u) => DropdownMenuItem(value: u, child: Text(u)))
-                  .toList(),
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() {
-                  category = value;
-                  from = units[value]!.keys.first;
-                  to = units[value]!.keys.elementAt(1);
-                });
-                calculate();
-              },
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: amount,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'Miktar'),
-              onChanged: (_) => calculate(),
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              value: from,
-              decoration: const InputDecoration(labelText: 'Nereden'),
-              items: options
-                  .map((u) => DropdownMenuItem(value: u, child: Text(u)))
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => from = value);
-                  calculate();
-                }
-              },
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              value: to,
-              decoration: const InputDecoration(labelText: 'Nereye'),
-              items: options
-                  .map((u) => DropdownMenuItem(value: u, child: Text(u)))
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => to = value);
-                  calculate();
-                }
-              },
-            ),
-            const SizedBox(height: 14),
-            SelectableText(
-              result,
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+class ProPage extends StatefulWidget { final void Function(String) onMessage; const ProPage({super.key,required this.onMessage}); @override State<ProPage> createState()=>_ProPageState(); }
+class _ProPageState extends State<ProPage> { final iap=InAppPurchase.instance; bool available=false, busy=false; List<ProductDetails> products=[]; @override void initState(){super.initState();_load();} Future<void> _load() async { available=await iap.isAvailable(); if(available){final r=await iap.queryProductDetails({monthlyProductId,yearlyProductId}); products=r.productDetails; iap.purchaseStream.listen((events){for(final p in events){if(p.status==PurchaseStatus.purchased||p.status==PurchaseStatus.restored){widget.onMessage('Satın alma mağazadan bildirildi. Üretimde sunucu taraflı makbuz doğrulaması eklenmeden Pro erişimi açılmamalıdır.');} if(p.pendingCompletePurchase) iap.completePurchase(p);}});} if(mounted)setState(()=>busy=false); } @override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(16),children:[const Icon(Icons.workspace_premium,color:Colors.amber,size:60),const Text('CepAsistan Pro',textAlign:TextAlign.center,style:TextStyle(fontSize:24,fontWeight:FontWeight.bold)),const SizedBox(height:8),const Text('Daha yüksek yapay zekâ kotası ve gelişmiş araçlar.',textAlign:TextAlign.center),const SizedBox(height:18),const ListTile(leading:Icon(Icons.check_circle,color:Colors.green),title:Text('Ücretsiz temel araçlar her zaman kullanılabilir')),const ListTile(leading:Icon(Icons.check_circle,color:Colors.green),title:Text('Pro ile daha yüksek AI kullanım kotası')),if(!available)const Text('Mağaza satın alımları şu anda kullanılamıyor.'),if(available&&products.isEmpty)const Text('Mağaza ürünleri bulunamadı. Play Console / App Store Connect ürün kimliklerini yapılandır.'),...products.map((p)=>FilledButton(onPressed:busy?null:() async {setState(()=>busy=true); await iap.buyNonConsumable(purchaseParam:PurchaseParam(productDetails:p)); if(mounted)setState(()=>busy=false);},child:Text('${p.title} · ${p.price}'))),OutlinedButton(onPressed:() async {await iap.restorePurchases();widget.onMessage('Satın alma geri yükleme isteği gönderildi.');},child:const Text('Satın alımları geri yükle')),const SizedBox(height:12),const Text('Not: Gerçek Pro erişimi için mağaza makbuzunu sunucuda doğrulayın. Bu ekran tek başına güvenli abonelik doğrulaması sağlamaz.',style:TextStyle(fontSize:12,color:Colors.grey))]); }
