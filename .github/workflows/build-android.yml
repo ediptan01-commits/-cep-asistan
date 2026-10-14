@@ -34,6 +34,48 @@ jobs:
           cp lib/main.dart _build/lib/main.dart
           cp pubspec.yaml _build/pubspec.yaml
 
+      - name: Android bildirim derleme ayarını yap
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          app_dir = Path("_build/android/app")
+          kts_file = app_dir / "build.gradle.kts"
+          gradle_file = app_dir / "build.gradle"
+
+          if kts_file.exists():
+              gradle_file = kts_file
+              enabled_setting = "isCoreLibraryDesugaringEnabled = true"
+              dependency = 'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
+          else:
+              enabled_setting = "coreLibraryDesugaringEnabled true"
+              dependency = "coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'"
+
+          content = gradle_file.read_text()
+
+          if "compileOptions {" not in content:
+              raise SystemExit(f"compileOptions bloğu bulunamadı: {gradle_file}")
+
+          if enabled_setting not in content:
+              content = content.replace(
+                  "compileOptions {",
+                  f"compileOptions {{\n        {enabled_setting}",
+                  1,
+              )
+
+          if dependency not in content:
+              if "dependencies {" in content:
+                  content = content.replace(
+                      "dependencies {",
+                      f"dependencies {{\n    {dependency}",
+                      1,
+                  )
+              else:
+                  content += f"\ndependencies {{\n    {dependency}\n}}\n"
+
+          gradle_file.write_text(content)
+          PY
+
       - name: Paketleri kur
         working-directory: _build
         run: flutter pub get
