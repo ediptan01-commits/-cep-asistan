@@ -1,0 +1,73 @@
+
+name: CepAsistan Güncelleme Kitini Kur
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  install-kit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Depoyu indir
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ZIP dosyasını bul
+        id: findzip
+        run: |
+          ZIP_FILE="$(find . -maxdepth 1 -type f -name '*.zip' | head -n 1)"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "HATA: Deponun ana klasöründe ZIP dosyası bulunamadı."
+            exit 1
+          fi
+          echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
+          echo "Bulunan dosya: $ZIP_FILE"
+
+      - name: ZIP dosyasını aç
+        run: |
+          mkdir -p /tmp/cep-asistan-kit
+          unzip -o "${{ steps.findzip.outputs.zip_file }}" -d /tmp/cep-asistan-kit
+
+      - name: Dosyaları doğru klasörlere yerleştir
+        run: |
+          KIT="/tmp/cep-asistan-kit/cep-asistan-kit"
+
+          if [ ! -f "$KIT/lib/main.dart" ]; then
+            echo "HATA: ZIP içinde lib/main.dart bulunamadı."
+            find /tmp/cep-asistan-kit -maxdepth 4 -type f
+            exit 1
+          fi
+
+          cp "$KIT/lib/main.dart" lib/main.dart
+          mkdir -p .github/workflows server
+
+          cp "$KIT/.github/workflows/build-android.yml" \
+            .github/workflows/build-android.yml
+
+          cp "$KIT/.github/workflows/build-ios.yml" \
+            .github/workflows/build-ios.yml
+
+          cp "$KIT/server/main.py" server/main.py
+          cp "$KIT/server/requirements.txt" server/requirements.txt
+
+          cp "$KIT/README.md" CEPASISTAN-KURULUM.md
+
+      - name: Değişiklikleri kaydet
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/main.dart .github/workflows/build-android.yml \
+            .github/workflows/build-ios.yml server CEPASISTAN-KURULUM.md
+
+          if git diff --cached --quiet; then
+            echo "Kaydedilecek yeni bir değişiklik yok."
+          else
+            git commit -m "CepAsistan temel özelliklerini güncelle"
+            git push
+          fi
+          
