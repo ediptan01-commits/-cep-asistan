@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -196,6 +197,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int tab = 0;
   bool loading = true;
+  bool _exitDialogOpen = false;
 
   List<Map<String, dynamic>> notes = [];
   List<Map<String, dynamic>> tasks = [];
@@ -933,7 +935,17 @@ Widget _listPage(
       'Pro üyelik',
     ];
 
-    return Scaffold(
+    return PopScope<Object?>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (tab != 0) {
+          setState(() => tab = 0);
+        } else {
+          _confirmExit();
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text(
           pageTitles[tab],
@@ -1012,7 +1024,39 @@ Widget _listPage(
               child: const Icon(Icons.add),
             )
           : null,
+      ),
     );
+  }
+
+  Future<void> _confirmExit() async {
+    if (_exitDialogOpen || !mounted) return;
+    _exitDialogOpen = true;
+    try {
+      final shouldExit = await showDialog<bool>(
+        context: context,
+        useRootNavigator: true,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Uygulamadan çıkılsın mı?'),
+          content: const Text('CepAsistan’dan çıkmak istediğine emin misin?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Vazgeç'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Çıkış'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (shouldExit == true) {
+        await SystemNavigator.pop();
+      }
+    } finally {
+      _exitDialogOpen = false;
+    }
   }
 }
 
@@ -1117,7 +1161,7 @@ class _ToolsPageState extends State<ToolsPage> {
                 ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
-                  initualvalue: op,
+                  initialValue: op,
                   decoration: const InputDecoration(labelText: 'İşlem'),
                   items: ['+', '-', '×', '÷']
                       .map(
@@ -1178,7 +1222,7 @@ class _ToolsPageState extends State<ToolsPage> {
                 ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
-                  value: unit,
+                  initialValue: unit,
                   decoration: const InputDecoration(labelText: 'Birim'),
                   items: const [
                     DropdownMenuItem(
@@ -1398,7 +1442,7 @@ class _ProPageState extends State<ProPage> {
 
   List<ProductDetails> products = [];
   Stream<List<PurchaseDetails>>? purchaseStream;
-  late final StreamSubscription<List<PurchaseDetails>> purchaseSubscription;
+  StreamSubscription<List<PurchaseDetails>>? purchaseSubscription;
 
   @override
   void initState() {
@@ -1409,6 +1453,7 @@ class _ProPageState extends State<ProPage> {
   Future<void> _load() async {
     try {
       available = await iap.isAvailable();
+      if (!mounted) return;
 
       if (available) {
         final response = await iap.queryProductDetails({
@@ -1416,6 +1461,7 @@ class _ProPageState extends State<ProPage> {
           yearlyProductId,
         });
 
+        if (!mounted) return;
         products = response.productDetails;
 
         if (response.error != null) {
@@ -1491,7 +1537,7 @@ class _ProPageState extends State<ProPage> {
   @override
   void dispose() {
     if (available) {
-      purchaseSubscription.cancel();
+      purchaseSubscription?.cancel();
     }
     super.dispose();
   }
@@ -1581,4 +1627,3 @@ class _ProPageState extends State<ProPage> {
     );
   }
 }
-       
