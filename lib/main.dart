@@ -19,7 +19,7 @@ const Color navy = Color(0xFF183153);
 
 const String aiEndpoint = String.fromEnvironment(
   'AI_ENDPOINT',
-  defaultValue: 'https://YOUR-SERVER.example.com/chat',
+  defaultValue: 'https://cepasistan-ai.cepasistan-app-7416.workers.dev/chat',
 );
 
 const String monthlyProductId = 'cepasistan_pro_monthly';
