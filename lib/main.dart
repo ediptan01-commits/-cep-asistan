@@ -1163,62 +1163,86 @@ class _CalculatorPageState extends State<CalculatorPage> {
   @override
   Widget build(BuildContext context) {
     const keys = [
-      ['AC', '+/-', '%', '÷'],
-      ['7', '8', '9', '×'],
-      ['4', '5', '6', '−'],
-      ['1', '2', '3', '+'],
-      ['DEL', '0', '.', '='],
+      'AC', '+/-', '%', '÷',
+      '7', '8', '9', '×',
+      '4', '5', '6', '−',
+      '1', '2', '3', '+',
+      'DEL', '0', '.', '=',
     ];
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          Expanded(
-            flex: 2,
-            child: Container(
-              alignment: Alignment.bottomRight,
-              width: double.infinity,
-              padding: const EdgeInsets.all(24),
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerRight,
-                child: Text(
-                  display,
-                  style: const TextStyle(
-                    fontSize: 56,
-                    fontWeight: FontWeight.w500,
-                    color: navy,
+    return SafeArea(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Column(
+              children: [
+                SizedBox(
+                  height: constraints.maxHeight * .22,
+                  width: double.infinity,
+                  child: Container(
+                    alignment: Alignment.bottomRight,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        display,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontSize: 56,
+                          fontWeight: FontWeight.w500,
+                          color: navy,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-          ),
-          ...keys.map(
-            (row) => Expanded(
-              child: Row(
-                children: row.map((key) {
-                  final isOperator = ['÷', '×', '−', '+', '='].contains(key);
-                  return Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.all(5),
-                      child: FilledButton(
+                Expanded(
+                  child: GridView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    itemCount: keys.length,
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 4,
+                      childAspectRatio: 1.15,
+                      crossAxisSpacing: 8,
+                      mainAxisSpacing: 8,
+                    ),
+                    itemBuilder: (context, index) {
+                      final key = keys[index];
+                      final isOperator = ['÷', '×', '−', '+', '='].contains(key);
+                      final isUtility = ['AC', 'DEL', '+/-', '%'].contains(key);
+                      return FilledButton(
                         style: FilledButton.styleFrom(
-                          backgroundColor: isOperator ? navy : Colors.white,
-                          foregroundColor: isOperator ? Colors.white : navy,
+                          backgroundColor: isOperator
+                              ? navy
+                              : isUtility
+                                  ? const Color(0xFFE3EAF3)
+                                  : Colors.white,
+                          foregroundColor: navy,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(18),
                           ),
                         ),
                         onPressed: () => press(key),
-                        child: FittedBox(child: Text(key, style: const TextStyle(fontSize: 24))),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            key,
+                            style: TextStyle(
+                              fontSize: key.length > 2 ? 18 : 26,
+                              fontWeight: FontWeight.w600,
+                              color: isOperator ? Colors.white : navy,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
