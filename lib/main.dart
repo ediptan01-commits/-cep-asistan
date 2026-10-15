@@ -1169,11 +1169,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
   @override
   Widget build(BuildContext context) {
     const keys = [
-      'AC', '+/-', '%', '÷',
-      '7', '8', '9', '×',
-      '4', '5', '6', '−',
-      '1', '2', '3', '+',
-      'DEL', '0', '.', '=',
+      'C', '×', '÷', 'DEL',
+      '7', '8', '9', '−',
+      '4', '5', '6', '+',
+      '1', '2', '3', '%',
+      '+/-', '0', ',', '=',
     ];
     return SafeArea(
       child: LayoutBuilder(
@@ -1212,7 +1212,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                           fit: BoxFit.scaleDown,
                           alignment: Alignment.centerRight,
                           child: Text(
-                            display,
+                            display.replaceAll('.', ','),
                             maxLines: 1,
                             style: const TextStyle(
                               fontSize: 56,
@@ -1231,37 +1231,45 @@ class _CalculatorPageState extends State<CalculatorPage> {
                     itemCount: keys.length,
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 4,
-                      childAspectRatio: 1.15,
+                      childAspectRatio: 1,
                       crossAxisSpacing: 8,
                       mainAxisSpacing: 8,
                     ),
                     itemBuilder: (context, index) {
-                      final key = keys[index];
+                      final label = keys[index];
+                      final key = label == 'C'
+                          ? 'AC'
+                          : label == ','
+                              ? '.'
+                              : label;
                       final isOperator = ['÷', '×', '−', '+', '='].contains(key);
                       final isUtility = ['AC', 'DEL', '+/-', '%'].contains(key);
                       return FilledButton(
                         style: FilledButton.styleFrom(
                           backgroundColor: isOperator
-                              ? navy
+                              ? key == '='
+                                  ? const Color(0xFF3266A8)
+                                  : navy
                               : isUtility
-                                  ? const Color(0xFFE3EAF3)
-                                  : Colors.white,
+                                  ? const Color(0xFFDCE5EF)
+                                  : const Color(0xFFE9EEF5),
                           foregroundColor: navy,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(18),
-                          ),
+                          padding: EdgeInsets.zero,
+                          shape: const CircleBorder(),
                         ),
                         onPressed: () => press(key),
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
-                          child: Text(
-                            key,
-                            style: TextStyle(
-                              fontSize: key.length > 2 ? 18 : 26,
-                              fontWeight: FontWeight.w600,
-                              color: isOperator ? Colors.white : navy,
-                            ),
-                          ),
+                          child: label == 'DEL'
+                              ? const Icon(Icons.backspace_outlined, size: 26)
+                              : Text(
+                                  label,
+                                  style: TextStyle(
+                                    fontSize: label.length > 2 ? 18 : 26,
+                                    fontWeight: FontWeight.w600,
+                                    color: isOperator ? Colors.white : navy,
+                                  ),
+                                ),
                         ),
                       );
                     },
