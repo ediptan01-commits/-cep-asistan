@@ -1083,6 +1083,7 @@ class CalculatorPage extends StatefulWidget {
 
 class _CalculatorPageState extends State<CalculatorPage> {
   String display = '0';
+  String expression = '';
   double? storedValue;
   String? operation;
   bool startNewNumber = false;
@@ -1091,6 +1092,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
     setState(() {
       if (key == 'AC') {
         display = '0';
+        expression = '';
         storedValue = null;
         operation = null;
         startNewNumber = false;
@@ -1112,6 +1114,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
       } else if (['+', '−', '×', '÷'].contains(key)) {
         storedValue = _number(display);
         operation = key;
+        expression = '$display $key';
         startNewNumber = true;
       } else if (key == '=') {
         final left = storedValue;
@@ -1124,6 +1127,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
             '÷' => right == 0 ? null : left / right,
             _ => null,
           };
+          expression = '$left $operation $right =';
           display = answer == null ? 'Hata' : _format(answer);
           storedValue = null;
           operation = null;
@@ -1131,6 +1135,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
         }
       } else if (key == '.') {
         if (startNewNumber || display == 'Hata') {
+          if (operation == null) expression = '';
           display = '0.';
           startNewNumber = false;
         } else if (!display.contains('.')) {
@@ -1138,6 +1143,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
         }
       } else {
         if (startNewNumber || display == '0' || display == 'Hata') {
+          if (operation == null) expression = '';
           display = key;
           startNewNumber = false;
         } else if (display.replaceAll('-', '').replaceAll('.', '').length < 14) {
@@ -1179,21 +1185,43 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 SizedBox(
                   height: constraints.maxHeight * .22,
                   width: double.infinity,
-                  child: Container(
-                    alignment: Alignment.bottomRight,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        display,
-                        maxLines: 1,
-                        style: const TextStyle(
-                          fontSize: 56,
-                          fontWeight: FontWeight.w500,
-                          color: navy,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        if (expression.isNotEmpty)
+                          SizedBox(
+                            width: double.infinity,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                expression,
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  fontSize: 22,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 4),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            display,
+                            maxLines: 1,
+                            style: const TextStyle(
+                              fontSize: 56,
+                              fontWeight: FontWeight.w500,
+                              color: navy,
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
                   ),
                 ),
