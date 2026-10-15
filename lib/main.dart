@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -197,7 +196,6 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int tab = 0;
   bool loading = true;
-  bool _exitDialogOpen = false;
 
   List<Map<String, dynamic>> notes = [];
   List<Map<String, dynamic>> tasks = [];
@@ -352,6 +350,61 @@ class _HomePageState extends State<HomePage> {
     await _saveAll();
 
     if (mounted) _msg('Görev eklendi.');
+  }
+
+  // TARİH VE SAAT ATANMIŞ GÜNLÜK PLAN GÖREVİ
+  Future<void> _addPlannedTask() async {
+    final title = await _textDialog(
+      'Planlı görev ekle',
+      'Örn. Doktor randevusu',
+    );
+    if (!mounted || title == null || title.trim().isEmpty) return;
+
+    final now = DateTime.now();
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: DateTime(now.year, now.month, now.day),
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: DateTime(now.year + 10),
+    );
+    if (!mounted || selectedDate == null) return;
+
+    final selectedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(now.add(const Duration(hours: 1))),
+    );
+    if (!mounted || selectedTime == null) return;
+
+    final when = DateTime(
+      selectedDate.year,
+      selectedDate.month,
+      selectedDate.day,
+      selectedTime.hour,
+      selectedTime.minute,
+    );
+    if (!when.isAfter(DateTime.now())) {
+      _msg('Lütfen gelecekte bir tarih ve saat seç.');
+      return;
+    }
+
+    final id = DateTime.now().millisecondsSinceEpoch.remainder(2147483647);
+    final item = <String, dynamic>{
+      'id': id,
+      'title': title.trim(),
+      'done': false,
+      'when': when.toIso8601String(),
+      'body': 'Planlanan görev zamanı geldi.',
+    };
+    tasks.insert(0, item);
+    await _saveAll();
+
+    try {
+      await NotifyService.schedule(item);
+      if (mounted) _msg('Görev plana eklendi, bildirimi ayarlandı.');
+    } catch (e) {
+      debugPrint('Plan bildirimi hatası: $e');
+      if (mounted) _msg('Görev plana eklendi ancak bildirim ayarlanamadı.');
+    }
   }
 
   // --------------------------------------------------
@@ -562,6 +615,90 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _todayPlanSection() {
+    final now = DateTime.now();
+    final todayItems = tasks.where((item) {
+      final date = DateTime.tryParse(item['when']?.toString() ?? '');
+      return date != null &&
+          date.year == now.year &&
+          date.month == now.month &&
+          date.day == now.day;
+    }).toList()
+      ..sort((a, b) => DateTime.parse(a['when'].toString())
+          .compareTo(DateTime.parse(b['when'].toString())));
+
+    return Card(
+      elevation: 0,
+      color: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Bugünkü planım',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _addPlannedTask,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Ekle'),
+                ),
+              ],
+            ),
+            if (todayItems.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('Bugün için planlı görev yok.'),
+              )
+            else
+              ...todayItems.map((item) {
+                final date = DateTime.parse(item['when'].toString()).toLocal();
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    item['done'] == true
+                        ? Icons.check_circle
+                        : Icons.schedule,
+                    color: item['done'] == true ? Colors.green : navy,
+                  ),
+                  title: Text(
+                    item['title']?.toString() ?? '',
+                    style: TextStyle(
+                      decoration: item['done'] == true
+                          ? TextDecoration.lineThrough
+                          : TextDecoration.none,
+                    ),
+                  ),
+                  subtitle: Text(
+                    '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}',
+                  ),
+                  trailing: Checkbox(
+                    value: item['done'] == true,
+                    onChanged: (value) async {
+                      item['done'] = value == true;
+                      if (value == true) {
+                        try {
+                          await NotifyService.cancel((item['id'] as num).toInt());
+                        } catch (e) {
+                          debugPrint('Plan bildirimi iptal edilemedi: $e');
+                        }
+                      }
+                      await _saveAll();
+                    },
+                  ),
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _dashboard() {
     final pendingTasks =
         tasks.where((item) => item['done'] != true).length;
@@ -608,6 +745,11 @@ class _HomePageState extends State<HomePage> {
                     icon: const Icon(Icons.add),
                     label: const Text('Görev ekle'),
                   ),
+                  FilledButton.tonalIcon(
+                    onPressed: _addPlannedTask,
+                    icon: const Icon(Icons.calendar_month_outlined),
+                    label: const Text('Günlük plan'),
+                  ),
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white,
@@ -622,6 +764,8 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
         ),
+        const SizedBox(height: 18),
+        _todayPlanSection(),
         const SizedBox(height: 20),
         const Text(
           'Araçların',
@@ -668,17 +812,9 @@ class _HomePageState extends State<HomePage> {
         ),
         _tile(
           Icons.calculate_outlined,
-          'Hesap makinesi',
-          'Dört işlem ve temel hesaplama',
-          () => setState(() => tab = 8),
-          color: Colors.teal,
-        ),
-        _tile(
-          Icons.straighten_outlined,
-          'Ölçü birimi dönüştürücü',
-          'Uzunluk, ağırlık, hacim ve diğer birimler',
+          'Hesap makinesi ve birim dönüştürme',
+          'Günlük hesaplama araçları',
           () => setState(() => tab = 5),
-          color: Colors.deepOrange,
         ),
         _tile(
           Icons.auto_awesome,
@@ -759,13 +895,14 @@ Widget _listPage(
                     ),
                     subtitle: Text(
                       isReminders
-                          ? (DateTime.tryParse(
-                                    item['when']?.toString() ?? '',
-                                  )
+                          ? (DateTime.tryParse(item['when']?.toString() ?? '')
                                   ?.toLocal()
-                                  .toString() ??
-                              '')
-                          : (item['body']?.toString() ?? ''),
+                                  .toString() ?? '')
+                          : (isTasks && item['when'] != null
+                              ? DateTime.tryParse(item['when'].toString())
+                                      ?.toLocal()
+                                      .toString() ?? ''
+                              : (item['body']?.toString() ?? '')),
                     ),
                     trailing: IconButton(
                       tooltip: 'Sil',
@@ -938,23 +1075,12 @@ Widget _listPage(
       'Görevlerim',
       'Hatırlatıcılar',
       'Gelir-gider',
-      'Ölçü birimleri',
+      'Araçlar',
       'Yapay zekâ',
       'Pro üyelik',
-      'Hesap makinesi',
     ];
 
-    return PopScope<Object?>(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop) return;
-        if (tab != 0) {
-          setState(() => tab = 0);
-        } else {
-          _confirmExit();
-        }
-      },
-      child: Scaffold(
+    return Scaffold(
       appBar: AppBar(
         title: Text(
           pageTitles[tab],
@@ -981,10 +1107,9 @@ Widget _listPage(
                   isReminders: true,
                 ),
                 _budgetPage(),
-                const UnitConverterPage(),
+                const ToolsPage(),
                 AiPage(onMessage: _msg),
                 ProPage(onMessage: _msg),
-                const CalculatorPage(),
               ],
             ),
       bottomNavigationBar: NavigationBar(
@@ -1034,39 +1159,7 @@ Widget _listPage(
               child: const Icon(Icons.add),
             )
           : null,
-      ),
     );
-  }
-
-  Future<void> _confirmExit() async {
-    if (_exitDialogOpen || !mounted) return;
-    _exitDialogOpen = true;
-    try {
-      final shouldExit = await showDialog<bool>(
-        context: context,
-        useRootNavigator: true,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Uygulamadan çıkılsın mı?'),
-          content: const Text('CepAsistan’dan çıkmak istediğine emin misin?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Vazgeç'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Çıkış'),
-            ),
-          ],
-        ),
-      );
-      if (!mounted) return;
-      if (shouldExit == true) {
-        await SystemNavigator.pop();
-      }
-    } finally {
-      _exitDialogOpen = false;
-    }
   }
 }
 
@@ -1074,370 +1167,194 @@ Widget _listPage(
 // HESAP MAKİNESİ VE BİRİM DÖNÜŞTÜRÜCÜ
 // --------------------------------------------------
 
-class CalculatorPage extends StatefulWidget {
-  const CalculatorPage({super.key});
+class ToolsPage extends StatefulWidget {
+  const ToolsPage({super.key});
 
   @override
-  State<CalculatorPage> createState() => _CalculatorPageState();
+  State<ToolsPage> createState() => _ToolsPageState();
 }
 
-class _CalculatorPageState extends State<CalculatorPage> {
-  String display = '0';
-  String expression = '';
-  double? storedValue;
-  String? operation;
-  bool startNewNumber = false;
-
-  void press(String key) {
-    setState(() {
-      if (key == 'AC') {
-        display = '0';
-        expression = '';
-        storedValue = null;
-        operation = null;
-        startNewNumber = false;
-      } else if (key == 'DEL') {
-        if (display.length > 1) {
-          display = display.substring(0, display.length - 1);
-        } else {
-          display = '0';
-        }
-        _syncExpression();
-      } else if (key == '+/-') {
-        if (display != '0') {
-          display = display.startsWith('-')
-              ? display.substring(1)
-              : '-$display';
-        }
-        _syncExpression();
-      } else if (key == '%') {
-        final value = _number(display);
-        if (value != null) display = _format(value / 100);
-        _syncExpression();
-      } else if (['+', '−', '×', '÷'].contains(key)) {
-        storedValue = _number(display);
-        operation = key;
-        expression = '$display $key';
-        startNewNumber = true;
-      } else if (key == '=') {
-        final left = storedValue;
-        final right = _number(display);
-        if (left != null && right != null && operation != null) {
-          final answer = switch (operation) {
-            '+' => left + right,
-            '−' => left - right,
-            '×' => left * right,
-            '÷' => right == 0 ? null : left / right,
-            _ => null,
-          };
-          expression =
-              '${_format(left).replaceAll('.', ',')} $operation '
-              '${_format(right).replaceAll('.', ',')} =';
-          display = answer == null ? 'Hata' : _format(answer);
-          storedValue = null;
-          operation = null;
-          startNewNumber = true;
-        }
-      } else if (key == '.') {
-        if (startNewNumber || display == 'Hata') {
-          if (operation == null) expression = '';
-          display = '0.';
-          startNewNumber = false;
-        } else if (!display.contains('.')) {
-          display += '.';
-        }
-        _syncExpression();
-      } else {
-        if (startNewNumber || display == '0' || display == 'Hata') {
-          if (operation == null) expression = '';
-          display = key;
-          startNewNumber = false;
-        } else if (display.replaceAll('-', '').replaceAll('.', '').length < 14) {
-          display += key;
-        }
-        _syncExpression();
-      }
-    });
-  }
-
-  void _syncExpression() {
-    if (operation == null || storedValue == null || startNewNumber) return;
-    expression =
-        '${_format(storedValue!).replaceAll('.', ',')} $operation '
-        '${display.replaceAll('.', ',')}';
-  }
-
-  double? _number(String value) => double.tryParse(value);
-
-  String _format(double value) {
-    if (!value.isFinite) return 'Hata';
-    if (value == value.roundToDouble() && value.abs() < 1e15) {
-      return value.toStringAsFixed(0);
-    }
-    final text = value.toStringAsPrecision(10);
-    return text.contains('.') && !text.contains('e')
-        ? text.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')
-        : text;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const keys = [
-      'AC', '+/-', '%', '÷',
-      '7', '8', '9', '×',
-      '4', '5', '6', '−',
-      '1', '2', '3', '+',
-      'DEL', '0', ',', '=',
-    ];
-    return SafeArea(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-            child: Column(
-              children: [
-                SizedBox(
-                  height: constraints.maxHeight * .22,
-                  width: double.infinity,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        if (expression.isNotEmpty)
-                          SizedBox(
-                            width: double.infinity,
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              alignment: Alignment.centerRight,
-                              child: Text(
-                                expression,
-                                maxLines: 1,
-                                style: const TextStyle(
-                                  fontSize: 22,
-                                  color: Colors.black54,
-                                ),
-                              ),
-                            ),
-                          ),
-                        const SizedBox(height: 4),
-                        FittedBox(
-                          fit: BoxFit.scaleDown,
-                          alignment: Alignment.centerRight,
-                          child: Text(
-                            display.replaceAll('.', ','),
-                            maxLines: 1,
-                            style: const TextStyle(
-                              fontSize: 56,
-                              fontWeight: FontWeight.w500,
-                              color: navy,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: GridView.builder(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    itemCount: keys.length,
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 4,
-                      childAspectRatio: 1.15,
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 8,
-                    ),
-                    itemBuilder: (context, index) {
-                      final label = keys[index];
-                      final key = label == ',' ? '.' : label;
-                      final isOperator = ['÷', '×', '−', '+', '='].contains(key);
-                      final isUtility = ['AC', 'DEL', '+/-', '%'].contains(key);
-                      return FilledButton(
-                        style: FilledButton.styleFrom(
-                          backgroundColor: isOperator
-                              ? navy
-                              : isUtility
-                                  ? const Color(0xFFDCE5EF)
-                                  : Colors.white,
-                          foregroundColor: navy,
-                          padding: EdgeInsets.zero,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                        ),
-                        onPressed: () => press(key),
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: label == 'DEL'
-                              ? const Icon(Icons.backspace_outlined, size: 26)
-                              : Text(
-                                  label,
-                                  style: TextStyle(
-                                    fontSize: label.length > 2 ? 18 : 26,
-                                    fontWeight: FontWeight.w600,
-                                    color: isOperator ? Colors.white : navy,
-                                  ),
-                                ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class UnitConverterPage extends StatefulWidget {
-  const UnitConverterPage({super.key});
-
-  @override
-  State<UnitConverterPage> createState() => _UnitConverterPageState();
-}
-
-class _UnitConverterPageState extends State<UnitConverterPage> {
+class _ToolsPageState extends State<ToolsPage> {
+  final TextEditingController a = TextEditingController();
+  final TextEditingController b = TextEditingController();
   final TextEditingController amount = TextEditingController(text: '1');
-  String category = 'Uzunluk';
-  String from = 'Metre';
-  String to = 'Kilometre';
+
+  String op = '+';
   String result = '';
+  String unit = 'Metre';
+  String converted = '100 Santimetre';
 
-  static const Map<String, Map<String, double>> units = {
-    'Uzunluk': {'Milimetre': .001, 'Santimetre': .01, 'Desimetre': .1, 'Metre': 1, 'Kilometre': 1000, 'İnç': .0254, 'Fit': .3048, 'Yarda': .9144, 'Mil': 1609.344, 'Deniz mili': 1852},
-    'Ağırlık / Kütle': {'Miligram': .000001, 'Gram': .001, 'Kilogram': 1, 'Ton': 1000, 'Ons': .028349523125, 'Pound': .45359237, 'Stone': 6.35029318},
-    'Hacim': {'Mililitre': .001, 'Litre': 1, 'Metreküp': 1000, 'Çay kaşığı': .00492892, 'Yemek kaşığı': .0147868, 'Su bardağı': .2, 'ABD galonu': 3.785411784, 'İngiliz galonu': 4.54609, 'ABD sıvı onsu': .0295735},
-    'Alan': {'Milimetrekare': .000001, 'Santimetrekare': .0001, 'Metrekare': 1, 'Hektar': 10000, 'Kilometrekare': 1000000, 'Fit kare': .09290304, 'Akre': 4046.8564224},
-    'Zaman': {'Milisaniye': .001, 'Saniye': 1, 'Dakika': 60, 'Saat': 3600, 'Gün': 86400, 'Hafta': 604800, 'Yıl (365 gün)': 31536000},
-    'Hız': {'Metre/saniye': 1, 'Kilometre/saat': .2777777778, 'Mil/saat': .44704, 'Fit/saniye': .3048, 'Deniz mili/saat': .514444},
-    'Sıcaklık': {'Santigrat': 1, 'Fahrenhayt': 2, 'Kelvin': 3},
-    'Veri': {'Bit': .125, 'Bayt': 1, 'Kilobayt (1000 B)': 1000, 'Megabayt (1000 B)': 1000000, 'Gigabayt (1000 B)': 1000000000, 'Kibibayt (1024 B)': 1024, 'Mebibayt (1024 B)': 1048576, 'Gibibayt (1024 B)': 1073741824},
-    'Basınç': {'Pascal': 1, 'Kilopascal': 1000, 'Bar': 100000, 'Atmosfer': 101325, 'PSI': 6894.757, 'mmHg': 133.322},
-    'Enerji': {'Joule': 1, 'Kilojoule': 1000, 'Kalori': 4.184, 'Kilokalori': 4184, 'Watt-saat': 3600, 'Kilowatt-saat': 3600000, 'Elektronvolt': 1.602176634e-19},
-    'Güç': {'Watt': 1, 'Kilowatt': 1000, 'Beygir gücü': 745.699872, 'Kilokalori/saat': 1.163},
-    'Kuvvet': {'Newton': 1, 'Kilonewton': 1000, 'Kilogram-kuvvet': 9.80665, 'Pound-kuvvet': 4.448222},
-    'Açı': {'Derece': 1, 'Radyan': 57.2957795, 'Grad': .9, 'Tur': 360},
-    'Yakıt tüketimi': {'Litre/100 km': 1, 'Kilometre/litre': 2, 'Mil/galon (ABD)': 3},
-  };
+  void calc() {
+    final x = double.tryParse(a.text.replaceAll(',', '.'));
+    final y = double.tryParse(b.text.replaceAll(',', '.'));
 
-  @override
-  void initState() {
-    super.initState();
-    _convert();
-  }
-
-  void _convert() {
-    final value = double.tryParse(amount.text.trim().replaceAll(',', '.'));
-    if (value == null) {
-      setState(() => result = 'Geçerli bir sayı gir.');
+    if (x == null || y == null) {
+      setState(() => result = 'İki sayı gir.');
       return;
     }
-    final factor = units[category]!;
-    double converted;
-    if (category == 'Sıcaklık') {
-      final celsius = switch (from) {
-        'Fahrenhayt' => (value - 32) * 5 / 9,
-        'Kelvin' => value - 273.15,
-        _ => value,
-      };
-      converted = switch (to) {
-        'Fahrenhayt' => celsius * 9 / 5 + 32,
-        'Kelvin' => celsius + 273.15,
-        _ => celsius,
-      };
-    } else if (category == 'Yakıt tüketimi') {
-      final lPer100 = switch (from) {
-        'Kilometre/litre' => value == 0 ? double.infinity : 100 / value,
-        'Mil/galon (ABD)' => value == 0 ? double.infinity : 235.214583 / value,
-        _ => value,
-      };
-      converted = switch (to) {
-        'Kilometre/litre' => lPer100 == 0 ? double.infinity : 100 / lPer100,
-        'Mil/galon (ABD)' => lPer100 == 0 ? double.infinity : 235.214583 / lPer100,
-        _ => lPer100,
-      };
-    } else {
-      converted = value * factor[from]! / factor[to]!;
+
+    if (op == '÷' && y == 0) {
+      setState(() => result = 'Sıfıra bölünemez.');
+      return;
     }
-    setState(() => result = '$value $from = ${_format(converted)} $to');
+
+    final answer = op == '+'
+        ? x + y
+        : op == '-'
+            ? x - y
+            : op == '×'
+                ? x * y
+                : x / y;
+
+    setState(() => result = 'Sonuç: $answer');
   }
 
-  String _format(double value) {
-    if (!value.isFinite) return 'Tanımsız';
-    if (value == value.roundToDouble() && value.abs() < 1e15) {
-      return value.toStringAsFixed(0);
-    }
-    final text = value.toStringAsPrecision(10);
-    return text.contains('.') && !text.contains('e')
-        ? text.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')
-        : text;
-  }
+  void convert() {
+    final value = double.tryParse(
+      amount.text.replaceAll(',', '.'),
+    );
 
-  void _changeCategory(String value) {
+    if (value == null) {
+      setState(() => converted = 'Geçerli sayı gir.');
+      return;
+    }
+
     setState(() {
-      category = value;
-      final names = units[category]!.keys.toList();
-      from = names.first;
-      to = names.length > 1 ? names[1] : names.first;
-      result = '';
+      converted = unit == 'Metre'
+          ? '${value * 100} Santimetre'
+          : '${value / 100} Metre';
     });
-    _convert();
   }
 
   @override
   void dispose() {
+    a.dispose();
+    b.dispose();
     amount.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final names = units[category]!.keys.toList();
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        const Text('Dönüştürülecek ölçü türünü ve birimleri seç.', style: TextStyle(color: Colors.black54)),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          initialValue: category,
-          decoration: const InputDecoration(labelText: 'Ölçü türü'),
-          items: units.keys.map((name) => DropdownMenuItem(value: name, child: Text(name))).toList(),
-          onChanged: (value) { if (value != null) _changeCategory(value); },
+        Card(
+          elevation: 0,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                const Text(
+                  'Hesap makinesi',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                TextField(
+                  controller: a,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                    signed: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Birinci sayı',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: op,
+                  decoration: const InputDecoration(labelText: 'İşlem'),
+                  items: ['+', '-', '×', '÷']
+                      .map(
+                        (value) => DropdownMenuItem(
+                          value: value,
+                          child: Text(value),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) setState(() => op = value);
+                  },
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: b,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                    signed: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'İkinci sayı',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: calc,
+                  child: const Text('Hesapla'),
+                ),
+                const SizedBox(height: 8),
+                Text(result),
+              ],
+            ),
+          ),
         ),
         const SizedBox(height: 12),
-        TextField(
-          controller: amount,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-          decoration: const InputDecoration(labelText: 'Miktar'),
-          onChanged: (_) => _convert(),
+        Card(
+          elevation: 0,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                const Text(
+                  'Uzunluk dönüştürücü',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                TextField(
+                  controller: amount,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Miktar',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: unit,
+                  decoration: const InputDecoration(labelText: 'Birim'),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'Metre',
+                      child: Text('Metre → Santimetre'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Santimetre',
+                      child: Text('Santimetre → Metre'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() => unit = value);
+                      convert();
+                    }
+                  },
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: convert,
+                  child: const Text('Dönüştür'),
+                ),
+                const SizedBox(height: 8),
+                Text(converted),
+              ],
+            ),
+          ),
         ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          key: ValueKey('$category-from'),
-          initialValue: from,
-          decoration: const InputDecoration(labelText: 'Nereden'),
-          items: names.map((name) => DropdownMenuItem(value: name, child: Text(name))).toList(),
-          onChanged: (value) { if (value != null) { setState(() => from = value); _convert(); } },
-        ),
-        const SizedBox(height: 12),
-        Center(child: IconButton.filledTonal(onPressed: () { setState(() { final old = from; from = to; to = old; }); _convert(); }, icon: const Icon(Icons.swap_vert), tooltip: 'Birimleri değiştir')),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          key: ValueKey('$category-to'),
-          initialValue: to,
-          decoration: const InputDecoration(labelText: 'Nereye'),
-          items: names.map((name) => DropdownMenuItem(value: name, child: Text(name))).toList(),
-          onChanged: (value) { if (value != null) { setState(() => to = value); _convert(); } },
-        ),
-        const SizedBox(height: 20),
-        Card(elevation: 0, child: Padding(padding: const EdgeInsets.all(18), child: Text(result, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)))),
-        const SizedBox(height: 8),
-        const Text('Uzunluk, kütle, hacim, alan, zaman, hız, sıcaklık, veri, basınç, enerji, güç, kuvvet, açı ve yakıt tüketimi.', style: TextStyle(fontSize: 12, color: Colors.black54), textAlign: TextAlign.center),
       ],
     );
   }
@@ -1639,7 +1556,6 @@ class _ProPageState extends State<ProPage> {
   Future<void> _load() async {
     try {
       available = await iap.isAvailable();
-      if (!mounted) return;
 
       if (available) {
         final response = await iap.queryProductDetails({
@@ -1647,7 +1563,6 @@ class _ProPageState extends State<ProPage> {
           yearlyProductId,
         });
 
-        if (!mounted) return;
         products = response.productDetails;
 
         if (response.error != null) {
