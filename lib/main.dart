@@ -1102,15 +1102,18 @@ class _CalculatorPageState extends State<CalculatorPage> {
         } else {
           display = '0';
         }
+        _syncExpression();
       } else if (key == '+/-') {
         if (display != '0') {
           display = display.startsWith('-')
               ? display.substring(1)
               : '-$display';
         }
+        _syncExpression();
       } else if (key == '%') {
         final value = _number(display);
         if (value != null) display = _format(value / 100);
+        _syncExpression();
       } else if (['+', '−', '×', '÷'].contains(key)) {
         storedValue = _number(display);
         operation = key;
@@ -1127,7 +1130,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
             '÷' => right == 0 ? null : left / right,
             _ => null,
           };
-          expression = '$left $operation $right =';
+          expression =
+              '${_format(left).replaceAll('.', ',')} $operation '
+              '${_format(right).replaceAll('.', ',')} =';
           display = answer == null ? 'Hata' : _format(answer);
           storedValue = null;
           operation = null;
@@ -1141,6 +1146,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
         } else if (!display.contains('.')) {
           display += '.';
         }
+        _syncExpression();
       } else {
         if (startNewNumber || display == '0' || display == 'Hata') {
           if (operation == null) expression = '';
@@ -1149,8 +1155,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
         } else if (display.replaceAll('-', '').replaceAll('.', '').length < 14) {
           display += key;
         }
+        _syncExpression();
       }
     });
+  }
+
+  void _syncExpression() {
+    if (operation == null || storedValue == null || startNewNumber) return;
+    expression =
+        '${_format(storedValue!).replaceAll('.', ',')} $operation '
+        '${display.replaceAll('.', ',')}';
   }
 
   double? _number(String value) => double.tryParse(value);
@@ -1169,11 +1183,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
   @override
   Widget build(BuildContext context) {
     const keys = [
-      'C', '×', '÷', 'DEL',
-      '7', '8', '9', '−',
-      '4', '5', '6', '+',
-      '1', '2', '3', '%',
-      '+/-', '0', ',', '=',
+      'AC', '+/-', '%', '÷',
+      '7', '8', '9', '×',
+      '4', '5', '6', '−',
+      '1', '2', '3', '+',
+      'DEL', '0', ',', '=',
     ];
     return SafeArea(
       child: LayoutBuilder(
@@ -1231,31 +1245,27 @@ class _CalculatorPageState extends State<CalculatorPage> {
                     itemCount: keys.length,
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 4,
-                      childAspectRatio: 1,
+                      childAspectRatio: 1.15,
                       crossAxisSpacing: 8,
                       mainAxisSpacing: 8,
                     ),
                     itemBuilder: (context, index) {
                       final label = keys[index];
-                      final key = label == 'C'
-                          ? 'AC'
-                          : label == ','
-                              ? '.'
-                              : label;
+                      final key = label == ',' ? '.' : label;
                       final isOperator = ['÷', '×', '−', '+', '='].contains(key);
                       final isUtility = ['AC', 'DEL', '+/-', '%'].contains(key);
                       return FilledButton(
                         style: FilledButton.styleFrom(
                           backgroundColor: isOperator
-                              ? key == '='
-                                  ? const Color(0xFF3266A8)
-                                  : navy
+                              ? navy
                               : isUtility
                                   ? const Color(0xFFDCE5EF)
-                                  : const Color(0xFFE9EEF5),
+                                  : Colors.white,
                           foregroundColor: navy,
                           padding: EdgeInsets.zero,
-                          shape: const CircleBorder(),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18),
+                          ),
                         ),
                         onPressed: () => press(key),
                         child: FittedBox(
