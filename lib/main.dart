@@ -1117,7 +1117,7 @@ class _ToolsPageState extends State<ToolsPage> {
                 ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
-                  value: op,
+                  initualvalue: op,
                   decoration: const InputDecoration(labelText: 'İşlem'),
                   items: ['+', '-', '×', '÷']
                       .map(
