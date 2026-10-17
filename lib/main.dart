@@ -828,13 +828,15 @@ class _HomePageState extends State<HomePage> {
           onAction: () => setState(() => tab = 9),
         ),
         const SizedBox(height: 4),
-        GridView.count(
-          crossAxisCount: 2,
+        GridView(
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisExtent: 124,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+          ),
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          childAspectRatio: 1.63,
           children: [
             _toolCard(
               Icons.calculate_outlined,
@@ -1236,13 +1238,15 @@ Widget _listPage(
           style: TextStyle(color: Color(0xFF718096), fontSize: 14),
         ),
         const SizedBox(height: 16),
-        GridView.count(
-          crossAxisCount: 2,
+        GridView(
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisExtent: 124,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+          ),
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          childAspectRatio: 1.63,
           children: [
             _toolCard(Icons.calculate_outlined, 'Hesap makinesi',
                 'Dört işlem ve yüzde', () => setState(() => tab = 8)),
