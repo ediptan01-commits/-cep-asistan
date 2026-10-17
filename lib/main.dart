@@ -45,23 +45,48 @@ class CepAsistanApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: navy),
+        colorScheme: ColorScheme.fromSeed(seedColor: navy).copyWith(
+          surface: const Color(0xFFF4F6FA),
+        ),
         scaffoldBackgroundColor: const Color(0xFFF5F7FB),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFFF5F7FB),
           foregroundColor: navy,
           centerTitle: false,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          surfaceTintColor: Colors.transparent,
+        ),
+        cardTheme: CardThemeData(
+          color: Colors.white,
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(21),
+          ),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: Colors.white,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 15,
+          ),
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide.none,
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: Color(0xFFE0E5ED)),
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: Color(0xFFE5EAF1)),
           ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: navy, width: 1.4),
+          ),
+        ),
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
         ),
       ),
       home: const HomePage(),
@@ -566,7 +591,7 @@ class _HomePageState extends State<HomePage> {
   // ANA SAYFA KARTI
   // --------------------------------------------------
 
-  Widget _tile(
+  Widget _toolCard(
     IconData icon,
     String title,
     String subtitle,
@@ -574,161 +599,370 @@ class _HomePageState extends State<HomePage> {
     Color color = navy,
   }) {
     return Card(
-      elevation: 0,
-      color: Colors.white,
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 6,
-        ),
-        leading: CircleAvatar(
-          backgroundColor: color.withValues(alpha: 0.12),
-          child: Icon(icon, color: color),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Text(subtitle),
-        trailing: const Icon(Icons.chevron_right),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(21),
         onTap: onTap,
-      ),
-    );
-  }
-
-  Widget _dashboard() {
-    final pendingTasks =
-        tasks.where((item) => item['done'] != true).length;
-
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [
-                navy,
-                Color(0xFF3266A8),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(24),
-          ),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text(
-                'Günlük hayatın, tek yerde.',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: color.withValues(alpha: .12),
+                child: Icon(icon, color: color, size: 20),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: navy,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 2),
               Text(
-                '$pendingTasks bekleyen görev · '
-                '${notes.length} not · '
-                '${reminders.length} hatırlatıcı',
-                style: const TextStyle(color: Colors.white70),
-              ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton.icon(
-                    onPressed: _addTask,
-                    icon: const Icon(Icons.add),
-                    label: const Text('Görev ekle'),
-                  ),
-                  OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: const BorderSide(color: Colors.white54),
-                    ),
-                    onPressed: _addReminder,
-                    icon: const Icon(Icons.notifications_active_outlined),
-                    label: const Text('Hatırlatıcı'),
-                  ),
-                ],
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Color(0xFF8290A3), fontSize: 11),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 20),
-        const Text(
-          'Araçların',
-          style: TextStyle(
-            fontSize: 21,
-            fontWeight: FontWeight.bold,
+      ),
+    );
+  }
+
+  Widget _sectionTitle(String title, {String? action, VoidCallback? onAction}) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(
+              color: navy,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
-        const SizedBox(height: 8),
-        _tile(
-          Icons.note_alt_outlined,
-          'Notlarım',
-          '${notes.length} kayıt',
-          () => setState(() => tab = 1),
-          color: Colors.blue,
+        if (action != null)
+          TextButton(
+            onPressed: onAction,
+            child: Text(action),
+          ),
+      ],
+    );
+  }
+
+  Widget _dashboard() {
+    final pendingTasks = tasks.where((item) => item['done'] != true).length;
+    final now = DateTime.now();
+    const weekdays = [
+      'PAZAR',
+      'PAZARTESİ',
+      'SALI',
+      'ÇARŞAMBA',
+      'PERŞEMBE',
+      'CUMA',
+      'CUMARTESİ',
+    ];
+    const months = [
+      'OCAK',
+      'ŞUBAT',
+      'MART',
+      'NİSAN',
+      'MAYIS',
+      'HAZİRAN',
+      'TEMMUZ',
+      'AĞUSTOS',
+      'EYLÜL',
+      'EKİM',
+      'KASIM',
+      'ARALIK',
+    ];
+    final greeting = now.hour < 12
+        ? 'Günaydın'
+        : now.hour < 18
+            ? 'İyi günler'
+            : 'İyi akşamlar';
+    final income = transactions
+        .where((item) => item['kind'] == 'Gelir')
+        .fold<double>(
+          0,
+          (sum, item) =>
+              sum + (item['amount'] is num ? (item['amount'] as num).toDouble() : 0),
+        );
+    final expense = transactions
+        .where((item) => item['kind'] == 'Gider')
+        .fold<double>(
+          0,
+          (sum, item) =>
+              sum + (item['amount'] is num ? (item['amount'] as num).toDouble() : 0),
+        );
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+      children: [
+        Text(
+          '${weekdays[now.weekday % 7]}, ${now.day} ${months[now.month - 1]}',
+          style: const TextStyle(
+            color: Color(0xFF718096),
+            fontWeight: FontWeight.w700,
+            letterSpacing: .7,
+            fontSize: 11,
+          ),
         ),
-        _tile(
-          Icons.task_alt,
-          'Görevlerim',
-          '$pendingTasks bekleyen',
-          () => setState(() => tab = 2),
-          color: Colors.green,
+        const SizedBox(height: 7),
+        Text(
+          '$greeting 👋',
+          style: const TextStyle(
+            color: navy,
+            fontWeight: FontWeight.w800,
+            fontSize: 25,
+          ),
         ),
-        _tile(
-          Icons.notifications_active_outlined,
-          'Hatırlatıcılar',
-          '${reminders.length} kayıt',
-          () => setState(() => tab = 3),
-          color: Colors.deepPurple,
+        const SizedBox(height: 3),
+        const Text(
+          'Bugün işlerini kolayca hallet.',
+          style: TextStyle(color: Color(0xFF718096), fontSize: 14),
         ),
-        _tile(
-          Icons.account_balance_wallet_outlined,
-          'Gelir-gider',
-          'Bütçeni takip et',
-          () => setState(() => tab = 4),
-          color: Colors.orange,
+        const SizedBox(height: 20),
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(25),
+            onTap: () => setState(() => tab = 6),
+            child: Ink(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [navy, Color(0xFF315F98)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(25),
+              ),
+              child: Stack(
+                children: [
+                  Positioned(
+                    right: 3,
+                    top: 0,
+                    child: CircleAvatar(
+                      radius: 24,
+                      backgroundColor: Colors.white.withValues(alpha: .12),
+                      child: const Icon(
+                        Icons.auto_awesome,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'CEP ASİSTAN AI',
+                        style: TextStyle(
+                          color: Color(0xFFC9D8EB),
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1,
+                          fontSize: 11,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Aklındaki soruyu sor',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 21,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Sorularına hızlıca yanıt al.',
+                        style: TextStyle(color: Color(0xFFE1EAF5), fontSize: 12),
+                      ),
+                      const SizedBox(height: 15),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Sohbete başla',
+                              style: TextStyle(
+                                color: navy,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
+                            SizedBox(width: 6),
+                            Icon(Icons.arrow_forward, color: navy, size: 16),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
-        _tile(
-          Icons.picture_as_pdf_outlined,
-          'Fotoğraftan PDF',
-          'Fotoğraf seç, PDF oluştur ve paylaş',
-          _makePdf,
-          color: Colors.red,
+        const SizedBox(height: 22),
+        _sectionTitle(
+          'Hızlı araçlar',
+          action: 'Tüm araçlar',
+          onAction: () => setState(() => tab = 9),
         ),
-        _tile(
-          Icons.calculate_outlined,
-          'Hesap makinesi',
-          'Dört işlem ve temel hesaplama',
-          () => setState(() => tab = 8),
-          color: Colors.teal,
+        const SizedBox(height: 4),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 1.63,
+          children: [
+            _toolCard(
+              Icons.calculate_outlined,
+              'Hesap makinesi',
+              'Hızlı hesapla',
+              () => setState(() => tab = 8),
+              color: navy,
+            ),
+            _toolCard(
+              Icons.straighten_outlined,
+              'Ölçü birimleri',
+              'Birim dönüştür',
+              () => setState(() => tab = 5),
+              color: const Color(0xFF318376),
+            ),
+            _toolCard(
+              Icons.note_alt_outlined,
+              'Notlarım',
+              '${notes.length} kayıt',
+              () => setState(() => tab = 1),
+              color: const Color(0xFF8057A5),
+            ),
+            _toolCard(
+              Icons.task_alt_outlined,
+              'Görevlerim',
+              '$pendingTasks bekleyen',
+              () => setState(() => tab = 2),
+              color: const Color(0xFF58814D),
+            ),
+          ],
         ),
-        _tile(
-          Icons.straighten_outlined,
-          'Ölçü birimi dönüştürücü',
-          'Uzunluk, ağırlık, hacim ve diğer birimler',
-          () => setState(() => tab = 5),
-          color: Colors.deepOrange,
+        const SizedBox(height: 22),
+        _sectionTitle('Bugünün özeti'),
+        const SizedBox(height: 10),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 10),
+            child: Row(
+              children: [
+                _summaryMetric(
+                  Icons.check_circle_outline,
+                  '$pendingTasks',
+                  'bekleyen görev',
+                  const Color(0xFF58814D),
+                  () => setState(() => tab = 2),
+                ),
+                _summaryMetric(
+                  Icons.notifications_none,
+                  '${reminders.length}',
+                  'hatırlatıcı',
+                  const Color(0xFF8057A5),
+                  () => setState(() => tab = 3),
+                ),
+                _summaryMetric(
+                  Icons.account_balance_wallet_outlined,
+                  '${(income - expense).toStringAsFixed(0)} ₺',
+                  'bakiye',
+                  const Color(0xFFC87832),
+                  () => setState(() => tab = 4),
+                ),
+              ],
+            ),
+          ),
         ),
-        _tile(
-          Icons.auto_awesome,
-          'Yapay zekâ asistanı',
-          'Sunucu ayarlandıktan sonra kullanılır',
-          () => setState(() => tab = 6),
-          color: Colors.indigo,
-        ),
-        _tile(
-          Icons.workspace_premium_outlined,
-          'Pro üyelik',
-          'Abonelik seçenekleri',
-          () => setState(() => tab = 7),
-          color: Colors.amber,
+        const SizedBox(height: 15),
+        OutlinedButton.icon(
+          onPressed: _addReminder,
+          icon: const Icon(Icons.add_alarm_outlined),
+          label: const Text('Hatırlatıcı ekle'),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+            foregroundColor: navy,
+            side: const BorderSide(color: Color(0xFFD9E2EE)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
         ),
       ],
+    );
+  }
+
+  Widget _summaryMetric(
+    IconData icon,
+    String value,
+    String label,
+    Color color,
+    VoidCallback onTap,
+  ) {
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+          child: Column(
+            children: [
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: color.withValues(alpha: .12),
+                child: Icon(icon, color: color, size: 17),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: navy,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFF8290A3),
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -737,87 +971,120 @@ class _HomePageState extends State<HomePage> {
   // --------------------------------------------------
 
 Widget _listPage(
-    String title,
-    List<Map<String, dynamic>> data,
-    Future<void> Function() add, {
-    bool isTasks = false,
-    bool isReminders = false,
-  }) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text(title),
-        actions: [
-          IconButton(
-            tooltip: 'Ekle',
-            onPressed: () => add(),
-            icon: const Icon(Icons.add),
-          ),
-        ],
-      ),
-      body: data.isEmpty
-          ? const Center(
-              child: Text('Henüz kayıt yok. + düğmesiyle ekle.'),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: data.length,
-              itemBuilder: (itemContext, index) {
-                final item = data[index];
-
-                return Card(
-                  elevation: 0,
-                  color: Colors.white,
-                  child: ListTile(
-                    leading: isTasks
-                        ? Checkbox(
-                            value: item['done'] == true,
-                            onChanged: (value) async {
-                              item['done'] = value == true;
-                              await _saveAll();
-                            },
-                          )
-                        : Icon(
-                            isReminders
-                                ? Icons.notifications_active_outlined
-                                : Icons.description_outlined,
-                          ),
-                    title: Text(
-                      item['title']?.toString() ?? '',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        decoration: isTasks && item['done'] == true
-                            ? TextDecoration.lineThrough
-                            : TextDecoration.none,
-                      ),
-                    ),
-                    subtitle: Text(
-                      isReminders
-                          ? (DateTime.tryParse(
-                                    item['when']?.toString() ?? '',
-                                  )
-                                  ?.toLocal()
-                                  .toString() ??
-                              '')
-                          : (item['body']?.toString() ?? ''),
-                    ),
-                    trailing: IconButton(
-                      tooltip: 'Sil',
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: () {
-                        _delete(
-                          data,
-                          index,
-                          reminder: isReminders,
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
+  List<Map<String, dynamic>> data, {
+  bool isTasks = false,
+  bool isReminders = false,
+}) {
+  if (data.isEmpty) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isTasks
+                  ? Icons.task_alt_outlined
+                  : isReminders
+                      ? Icons.notifications_none
+                      : Icons.note_alt_outlined,
+              size: 48,
+              color: const Color(0xFF9AA8B9),
             ),
+            const SizedBox(height: 12),
+            Text(
+              isTasks
+                  ? 'Henüz görev eklemedin.'
+                  : isReminders
+                      ? 'Henüz hatırlatıcı yok.'
+                      : 'Henüz not eklemedin.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: navy,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 5),
+            const Text(
+              'Yeni kayıt eklemek için sağ üstteki + düğmesine dokun.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF8290A3)),
+            ),
+          ],
+        ),
+      ),
     );
   }
+
+  return ListView.separated(
+    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+    itemCount: data.length,
+    separatorBuilder: (context, index) => const SizedBox(height: 10),
+    itemBuilder: (itemContext, index) {
+      final item = data[index];
+      final done = isTasks && item['done'] == true;
+      final iconColor = isTasks
+          ? const Color(0xFF58814D)
+          : isReminders
+              ? const Color(0xFF8057A5)
+              : navy;
+
+      return Card(
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 6,
+          ),
+          leading: isTasks
+              ? Checkbox.adaptive(
+                  value: done,
+                  onChanged: (value) async {
+                    item['done'] = value == true;
+                    await _saveAll();
+                  },
+                )
+              : CircleAvatar(
+                  backgroundColor: iconColor.withValues(alpha: .12),
+                  child: Icon(
+                    isReminders
+                        ? Icons.notifications_active_outlined
+                        : Icons.description_outlined,
+                    color: iconColor,
+                  ),
+                ),
+          title: Text(
+            item['title']?.toString() ?? '',
+            style: TextStyle(
+              color: navy,
+              fontWeight: FontWeight.w700,
+              decoration: done ? TextDecoration.lineThrough : null,
+            ),
+          ),
+          subtitle: Text(
+            isReminders
+                ? (DateTime.tryParse(item['when']?.toString() ?? '')
+                          ?.toLocal()
+                          .toString() ??
+                      '')
+                : (item['body']?.toString() ?? ''),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: IconButton(
+            tooltip: 'Sil',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () => _delete(
+              data,
+              index,
+              reminder: isReminders,
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
 
   // --------------------------------------------------
   // GELİR GİDER SAYFASI
@@ -960,6 +1227,49 @@ Widget _listPage(
     }
   }
 
+  Widget _toolsPage() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      children: [
+        const Text(
+          'İhtiyacın olan araçlar tek yerde.',
+          style: TextStyle(color: Color(0xFF718096), fontSize: 14),
+        ),
+        const SizedBox(height: 16),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 1.63,
+          children: [
+            _toolCard(Icons.calculate_outlined, 'Hesap makinesi',
+                'Dört işlem ve yüzde', () => setState(() => tab = 8)),
+            _toolCard(Icons.straighten_outlined, 'Ölçü birimleri',
+                'Birim dönüştürücü', () => setState(() => tab = 5),
+                color: const Color(0xFF318376)),
+            _toolCard(Icons.notifications_active_outlined, 'Hatırlatıcılar',
+                '${reminders.length} kayıt', () => setState(() => tab = 3),
+                color: const Color(0xFF8057A5)),
+            _toolCard(Icons.account_balance_wallet_outlined, 'Gelir-gider',
+                'Bütçeni takip et', () => setState(() => tab = 4),
+                color: const Color(0xFFC87832)),
+            _toolCard(Icons.picture_as_pdf_outlined, 'Fotoğraftan PDF',
+                'Oluştur ve paylaş', _makePdf,
+                color: const Color(0xFFC75C58)),
+            _toolCard(Icons.auto_awesome, 'Yapay zekâ', 'CepAsistan’a sor',
+                () => setState(() => tab = 6),
+                color: const Color(0xFF426CA0)),
+            _toolCard(Icons.workspace_premium_outlined, 'CepAsistan Pro',
+                'Üyelik seçenekleri', () => setState(() => tab = 7),
+                color: const Color(0xFFB18435)),
+          ],
+        ),
+      ],
+    );
+  }
+
   // --------------------------------------------------
   // ANA EKRAN VE ALT MENÜ
   // --------------------------------------------------
@@ -976,6 +1286,7 @@ Widget _listPage(
       'Yapay zekâ',
       'Pro üyelik',
       'Hesap makinesi',
+      'Araçlar',
     ];
 
     return PopScope<Object?>(
@@ -989,85 +1300,122 @@ Widget _listPage(
         }
       },
       child: Scaffold(
-      appBar: AppBar(
-        title: Text(
-          pageTitles[tab],
-          style: const TextStyle(fontWeight: FontWeight.bold),
+        appBar: AppBar(
+          title: tab == 0
+              ? Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE1EAF5),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(Icons.grid_view_rounded, color: navy),
+                    ),
+                    const SizedBox(width: 11),
+                    const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'CEP ASİSTAN',
+                          style: TextStyle(
+                            color: Color(0xFF718096),
+                            fontSize: 10,
+                            letterSpacing: 1,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          'Günlük yardımcın',
+                          style: TextStyle(
+                            color: navy,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                )
+              : Text(
+                  pageTitles[tab],
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+          actions: tab == 1 || tab == 2 || tab == 3
+              ? [
+                  IconButton.filledTonal(
+                    tooltip: 'Ekle',
+                    onPressed: () {
+                      if (tab == 1) _addNote();
+                      if (tab == 2) _addTask();
+                      if (tab == 3) _addReminder();
+                    },
+                    icon: const Icon(Icons.add),
+                  ),
+                  const SizedBox(width: 8),
+                ]
+              : null,
         ),
-      ),
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : IndexedStack(
-              index: tab,
-              children: [
-                _dashboard(),
-                _listPage('Notlarım', notes, _addNote),
-                _listPage(
-                  'Görevlerim',
-                  tasks,
-                  _addTask,
-                  isTasks: true,
-                ),
-                _listPage(
-                  'Hatırlatıcılar',
-                  reminders,
-                  _addReminder,
-                  isReminders: true,
-                ),
-                _budgetPage(),
-                const UnitConverterPage(),
-                AiPage(onMessage: _msg),
-                ProPage(onMessage: _msg),
-                const CalculatorPage(),
-              ],
+        body: loading
+            ? const Center(child: CircularProgressIndicator())
+            : IndexedStack(
+                index: tab,
+                children: [
+                  _dashboard(),
+                  _listPage(notes),
+                  _listPage(tasks, isTasks: true),
+                  _listPage(reminders, isReminders: true),
+                  _budgetPage(),
+                  const UnitConverterPage(),
+                  AiPage(onMessage: _msg),
+                  ProPage(onMessage: _msg),
+                  const CalculatorPage(),
+                  _toolsPage(),
+                ],
+              ),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: tab == 0
+              ? 0
+              : tab == 1
+                  ? 1
+                  : tab == 2
+                      ? 2
+                      : 3,
+          onDestinationSelected: (index) {
+            setState(() {
+              tab = switch (index) {
+                0 => 0,
+                1 => 1,
+                2 => 2,
+                _ => 9,
+              };
+            });
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home),
+              label: 'Ana sayfa',
             ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: tab == 0
-            ? 0
-            : tab == 1
-                ? 1
-                : tab == 2
-                    ? 2
-                    : 3,
-        onDestinationSelected: (index) {
-          setState(() {
-            if (index == 0) {
-              tab = 0;
-            } else if (index == 1) {
-              tab = 1;
-            } else if (index == 2) {
-              tab = 2;
-            } else {
-              tab = 5;
-            }
-          });
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Ana sayfa',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.note_alt_outlined),
-            label: 'Notlar',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.task_alt_outlined),
-            label: 'Görevler',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.grid_view_outlined),
-            label: 'Araçlar',
-          ),
-        ],
-      ),
-      floatingActionButton: tab == 1
-          ? FloatingActionButton(
-              onPressed: _addNote,
-              child: const Icon(Icons.add),
-            )
-          : null,
+            NavigationDestination(
+              icon: Icon(Icons.note_alt_outlined),
+              selectedIcon: Icon(Icons.note_alt),
+              label: 'Notlar',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.task_alt_outlined),
+              selectedIcon: Icon(Icons.task_alt),
+              label: 'Görevler',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.grid_view_outlined),
+              selectedIcon: Icon(Icons.grid_view_rounded),
+              label: 'Araçlar',
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1606,41 +1954,101 @@ class _AiPageState extends State<AiPage> {
       children: [
         Expanded(
           child: history.isEmpty
-              ? const Center(
+              ? Center(
                   child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      'CepAsistan’a bir şey sor. Mesajların OpenAI destekli '
-                      'asistana iletilecek.',
-                      textAlign: TextAlign.center,
+                    padding: const EdgeInsets.all(28),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircleAvatar(
+                          radius: 32,
+                          backgroundColor: const Color(0xFFE1EAF5),
+                          child: const Icon(
+                            Icons.auto_awesome,
+                            size: 30,
+                            color: navy,
+                          ),
+                        ),
+                        const SizedBox(height: 17),
+                        const Text(
+                          'Nasıl yardımcı olayım?',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: navy,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 22,
+                          ),
+                        ),
+                        const SizedBox(height: 7),
+                        const Text(
+                          'Sorunu yaz. CepAsistan senin için yanıtlasın.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Color(0xFF718096)),
+                        ),
+                      ],
                     ),
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
                   itemCount: history.length,
-                    itemBuilder: (context, index) {
-                      final item = history[index];
-                      final isUser = item['role'] == 'user';
-                    return Card(
-                      elevation: 0,
-                        color: isUser ? const Color(0xFFE3EAF3) : Colors.white,
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                isUser ? 'Sen' : 'CepAsistan',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: navy,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              SelectableText(item['content'] ?? ''),
-                            ],
+                  itemBuilder: (context, index) {
+                    final item = history[index];
+                    final isUser = item['role'] == 'user';
+                    final bubbleColor = isUser ? navy : Colors.white;
+                    final foreground = isUser ? Colors.white : navy;
+
+                    return Align(
+                      alignment: isUser
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      child: Container(
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.sizeOf(context).width * .82,
+                        ),
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 15,
+                          vertical: 12,
+                        ),
+                        decoration: BoxDecoration(
+                          color: bubbleColor,
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(19),
+                            topRight: const Radius.circular(19),
+                            bottomLeft: Radius.circular(isUser ? 19 : 5),
+                            bottomRight: Radius.circular(isUser ? 5 : 19),
                           ),
+                          boxShadow: isUser
+                              ? null
+                              : const [
+                                  BoxShadow(
+                                    color: Color(0x0B183153),
+                                    blurRadius: 12,
+                                    offset: Offset(0, 4),
+                                  ),
+                                ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              isUser ? 'Sen' : 'CepAsistan',
+                              style: TextStyle(
+                                color: isUser
+                                    ? const Color(0xFFD9E6F5)
+                                    : const Color(0xFF718096),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            SelectableText(
+                              item['content'] ?? '',
+                              style: TextStyle(color: foreground, height: 1.4),
+                            ),
+                          ],
+                        ),
                       ),
                     );
                   },
@@ -1648,8 +2056,12 @@ class _AiPageState extends State<AiPage> {
         ),
         SafeArea(
           top: false,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF4F6FA),
+              border: Border(top: BorderSide(color: Color(0xFFE5EAF1))),
+            ),
             child: Row(
               children: [
                 Expanded(
@@ -1657,14 +2069,37 @@ class _AiPageState extends State<AiPage> {
                     controller: input,
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => send(),
-                    decoration: const InputDecoration(
-                      hintText: 'Bir şey sor...',
+                    decoration: InputDecoration(
+                      hintText: 'CepAsistan’a bir şey sor...',
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 17,
+                        vertical: 13,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(22),
+                        borderSide: const BorderSide(
+                          color: Color(0xFFE5EAF1),
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(22),
+                        borderSide: const BorderSide(
+                          color: Color(0xFFE5EAF1),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 9),
                 IconButton.filled(
                   onPressed: busy ? null : send,
+                  style: IconButton.styleFrom(
+                    backgroundColor: navy,
+                    foregroundColor: Colors.white,
+                    fixedSize: const Size(49, 49),
+                  ),
                   icon: busy
                       ? const SizedBox(
                           width: 20,
