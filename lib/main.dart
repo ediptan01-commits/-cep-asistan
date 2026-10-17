@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -107,8 +108,41 @@ class Store {
 
   int get aiUses => _prefs?.getInt('ai_uses') ?? 0;
 
-  Future<void> setAiUses(int value) async {
+  String get _istanbulDateKey {
+    final now = tz.TZDateTime.now(tz.getLocation('Europe/Istanbul'));
+    final month = now.month.toString().padLeft(2, '0');
+    final day = now.day.toString().padLeft(2, '0');
+    return '${now.year}-$month-$day';
+  }
+
+  Future<int> prepareAiUsageToday() async {
+    final today = _istanbulDateKey;
+    if (_prefs?.getString('ai_uses_date') != today) {
+      await _prefs?.setString('ai_uses_date', today);
+      await _prefs?.setInt('ai_uses', 0);
+      return 0;
+    }
+    return aiUses;
+  }
+
+  Future<void> setAiUsesToday(int value) async {
+    await _prefs?.setString('ai_uses_date', _istanbulDateKey);
     await _prefs?.setInt('ai_uses', value);
+  }
+
+  Future<String> aiClientId() async {
+    final saved = _prefs?.getString('ai_client_id');
+    if (saved != null && RegExp(r'^[a-f0-9]{32}$').hasMatch(saved)) {
+      return saved;
+    }
+
+    final random = Random.secure();
+    final generated = List.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+    await _prefs?.setString('ai_client_id', generated);
+    return generated;
   }
 
   bool get isPro => _prefs?.getBool('is_pro_demo') ?? false;
@@ -1470,35 +1504,37 @@ class _AiPageState extends State<AiPage> {
 
     if (message.isEmpty || busy) return;
 
-    final isPro = Store.instance.isPro;
-    final used = Store.instance.aiUses;
-
-    if (!isPro && used >= 5) {
-      widget.onMessage(
-        'Ücretsiz demo kotası doldu. Pro üyelik bölümünü incele.',
-      );
-      return;
-    }
-
-    if (aiEndpoint.contains('YOUR-SERVER')) {
-      widget.onMessage(
-        'Yapay zekâ sunucusu henüz yapılandırılmadı.',
-      );
-      return;
-    }
-
-    setState(() {
-      busy = true;
-      history.add({'role': 'user', 'content': message});
-      input.clear();
-    });
-
+    setState(() => busy = true);
     try {
+      final used = await Store.instance.prepareAiUsageToday();
+      final clientId = await Store.instance.aiClientId();
+      if (!mounted) return;
+
+      if (used >= 5) {
+        widget.onMessage(
+          'Bugünkü 5 mesaj hakkın doldu. Yarın tekrar deneyebilirsin.',
+        );
+        return;
+      }
+
+      if (aiEndpoint.contains('YOUR-SERVER')) {
+        widget.onMessage(
+          'Yapay zekâ sunucusu henüz yapılandırılmadı.',
+        );
+        return;
+      }
+
+      setState(() {
+        history.add({'role': 'user', 'content': message});
+        input.clear();
+      });
+
       final response = await http
           .post(
             Uri.parse(aiEndpoint),
-            headers: const {
+            headers: {
               'Content-Type': 'application/json',
+              'X-CepAsistan-Client': clientId,
             },
             body: jsonEncode({
               'messages': history
@@ -1511,12 +1547,21 @@ class _AiPageState extends State<AiPage> {
           )
           .timeout(const Duration(seconds: 45));
 
+      if (!mounted) return;
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
 
-        if (data is Map && data['reply'] is String && (data['reply'] as String).trim().isNotEmpty) {
-          history.add({'role': 'assistant', 'content': data['reply'] as String});
-          await Store.instance.setAiUses(used + 1);
+        if (data is Map &&
+            data['reply'] is String &&
+            (data['reply'] as String).trim().isNotEmpty) {
+          history.add({
+            'role': 'assistant',
+            'content': data['reply'] as String,
+          });
+          final remaining = data['remainingToday'];
+          final updatedUsage = remaining is num ? 5 - remaining.toInt() : used + 1;
+          await Store.instance.setAiUsesToday(updatedUsage.clamp(0, 5).toInt());
         } else {
           history.add({
             'role': 'assistant',
@@ -1530,18 +1575,23 @@ class _AiPageState extends State<AiPage> {
           if (data is Map && data['error'] is String) {
             errorMessage = data['error'] as String;
           }
+          if (data is Map && data['code'] == 'DAILY_QUOTA_EXCEEDED') {
+            await Store.instance.setAiUsesToday(5);
+          }
         } catch (_) {}
         history.add({'role': 'assistant', 'content': errorMessage});
       }
     } catch (e) {
-      history.add({
-        'role': 'assistant',
-        'content': 'Bağlantı kurulamadı. İnternetini ve sunucu adresini kontrol et.',
-      });
+      if (mounted) {
+        history.add({
+          'role': 'assistant',
+          'content': 'Bağlantı kurulamadı. İnternetini ve sunucu adresini kontrol et.',
+        });
+      }
       debugPrint('AI bağlantı hatası: $e');
+    } finally {
+      if (mounted) setState(() => busy = false);
     }
-
-    if (mounted) setState(() => busy = false);
   }
 
   @override
