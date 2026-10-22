@@ -1,0 +1,18 @@
+name = "cepasistan-ai"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+AI_PROVIDER = "anthropic"
+AI_MODEL = "claude-haiku-5-5"
+FREE_LIMIT = "5"
+IP_LIMIT = "40"
+
+# Önce:  npx wrangler kv namespace create QUOTA
+# Çıkan id'yi aşağıya yaz.
+[[kv_namespaces]]
+binding = "QUOTA"
+id = "BURAYA_KV_ID"
+
+# Anahtarı koda değil secret olarak ekle:
+#   npx wrangler secret put AI_API_KEY
