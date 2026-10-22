@@ -1,0 +1,83 @@
+import worker, { parseNoteJson } from './worker.js';
+import assert from 'node:assert/strict';
+
+const store = new Map();
+const env = {
+  AI_API_KEY: 'x', AI_PROVIDER: 'anthropic', AI_MODEL: 'claude-haiku-5-5',
+  FREE_LIMIT: '5', IP_LIMIT: '40',
+  QUOTA: { get: async (k) => store.get(k) ?? null, put: async (k, v) => { store.set(k, v); } },
+};
+
+let upstream = { ok: true, text: 'Merhaba!' };
+let lastBody = null;
+globalThis.fetch = async (url, init) => {
+  lastBody = JSON.parse(init.body);
+  if (!upstream.ok) return new Response('err', { status: 500 });
+  return new Response(JSON.stringify({ content: [{ type: 'text', text: upstream.text }] }), { status: 200 });
+};
+
+const id = 'a'.repeat(32);
+const req = (path, body, headers = {}) => new Request('https://x.test' + path, {
+  method: 'POST',
+  headers: { 'X-CepAsistan-Client': id, 'CF-Connecting-IP': '1.1.1.1', ...headers },
+  body: typeof body === 'string' ? body : JSON.stringify(body),
+});
+const call = async (r) => { const res = await worker.fetch(r, env); return [res.status, await res.json()]; };
+
+// health
+let [s, j] = await call(new Request('https://x.test/health'));
+assert.equal(s, 200);
+
+// sohbet başarılı + kalan hak
+[s, j] = await call(req('/chat', { messages: [{ role: 'user', content: 'selam' }] }));
+assert.equal(s, 200); assert.equal(j.reply, 'Merhaba!'); assert.equal(j.remainingToday, 4);
+assert.equal(lastBody.model, 'claude-haiku-5-5'); assert.ok(lastBody.system);
+
+// geçersiz istemci kimliği
+[s, j] = await call(req('/chat', { messages: [{ role: 'user', content: 'a' }] }, { 'X-CepAsistan-Client': 'bad' }));
+assert.equal(s, 400);
+
+// geçersiz JSON ve asistan ile biten konuşma
+[s] = await call(req('/chat', '{bozuk'));
+assert.equal(s, 400);
+[s] = await call(req('/chat', { messages: [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }] }));
+assert.equal(s, 400);
+
+// yukarı akış hatası: hak düşmemeli
+upstream = { ok: false };
+const before = store.get(`c:${id}:${[...store.keys()][0].split(':').pop()}`);
+[s, j] = await call(req('/chat', { messages: [{ role: 'user', content: 'hey' }] }));
+assert.equal(s, 502);
+assert.equal(store.get([...store.keys()].find(k => k.startsWith('c:'))), before);
+
+// not -> görev (kod bloğuna sarılı JSON)
+upstream = { ok: true, text: 'İşte:\n```json\n{"summary":"Toplantı yarın.","tasks":[{"title":"Ahmet\'i ara","due":"2026-10-22T15:00"},{"title":"  ","due":null},{"title":"Rapor","due":"yarın"}]}\n```' };
+[s, j] = await call(req('/note', { note: 'Yarın 3 te Ahmet i ara, rapor hazırla', now: '2026-10-21T22:17' }));
+assert.equal(s, 200);
+assert.equal(j.summary, 'Toplantı yarın.');
+assert.deepEqual(j.tasks, [{ title: "Ahmet'i ara", due: '2026-10-22T15:00' }, { title: 'Rapor', due: null }]);
+assert.equal(j.remainingToday, 3);
+
+// çok kısa not
+[s] = await call(req('/note', { note: 'kısa' }));
+assert.equal(s, 400);
+
+// kota: 5. haktan sonra 429
+upstream = { ok: true, text: 'ok' };
+for (let i = 0; i < 3; i++) { [s, j] = await call(req('/chat', { messages: [{ role: 'user', content: 'x' }] })); assert.equal(s, 200); }
+assert.equal(j.remainingToday, 0);
+[s, j] = await call(req('/chat', { messages: [{ role: 'user', content: 'x' }] }));
+assert.equal(s, 429); assert.equal(j.code, 'DAILY_QUOTA_EXCEEDED');
+
+// farklı kimlik, aynı IP: IP sınırı devreye girer
+env.IP_LIMIT = '5';
+const id2 = 'b'.repeat(32);
+[s, j] = await call(req('/chat', { messages: [{ role: 'user', content: 'x' }] }, { 'X-CepAsistan-Client': id2 }));
+assert.equal(s, 429);
+
+// ayrıştırıcı uç durumlar
+assert.equal(parseNoteJson('json yok'), null);
+assert.equal(parseNoteJson('{"summary":"","tasks":[]}'), null);
+assert.equal(parseNoteJson('{"summary":"a","tasks":"x"}').tasks.length, 0);
+
+console.log('TÜM SUNUCU TESTLERİ GEÇTİ');
