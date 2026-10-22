@@ -1,0 +1,231 @@
+// CepAsistan AI sunucusu (Cloudflare Worker)
+// Uç noktalar:
+//   GET  /health
+//   POST /chat   -> { messages:[{role,content}] }           => { reply, remainingToday }
+//   POST /note   -> { note:"...", now:"2026-10-21T22:17" }  => { summary, tasks:[{title,due}], remainingToday }
+//
+// Ortam değişkenleri (wrangler secret / vars):
+//   AI_PROVIDER   "anthropic" (varsayılan) veya "openai"
+//   AI_API_KEY    sağlayıcı anahtarı (SECRET)
+//   AI_MODEL      örn. "claude-haiku-5-5" (anthropic) ya da OpenAI model adı
+//   FREE_LIMIT    günlük ücretsiz hak (varsayılan 5)
+//   IP_LIMIT      aynı IP'den günlük toplam hak (varsayılan 40)
+// KV bağlaması: QUOTA
+
+const CHAT_SYSTEM =
+  'Türkçe yanıt veren, kısa ve net konuşan bir günlük yaşam asistanısın. ' +
+  'Emin olmadığın şeyi açıkça söyle. Tıbbi, hukuki ve finansal konularda kesin hüküm verme.';
+
+const NOTE_SYSTEM =
+  'Sana bir Türkçe not verilecek. Yalnızca geçerli JSON döndür, başka metin yazma. ' +
+  'Şema: {"summary": string, "tasks": [{"title": string, "due": string|null}]}. ' +
+  '"summary" en fazla 3 cümle olsun. "tasks" notta açıkça geçen yapılacak işlerdir; ' +
+  'uydurma iş ekleme, en fazla 8 görev. "due" yalnızca notta tarih/saat varsa ' +
+  'YYYY-MM-DDTHH:MM biçiminde olsun (şu anki zaman sana verilecek), yoksa null.';
+
+const MAX_MESSAGES = 20;
+const MAX_CHARS = 8000;
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+  });
+}
+
+function istanbulDate() {
+  // YYYY-MM-DD, Europe/Istanbul
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Istanbul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+async function readCount(env, key) {
+  const raw = await env.QUOTA.get(key);
+  const n = parseInt(raw || '0', 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function bump(env, key) {
+  const n = (await readCount(env, key)) + 1;
+  // 2 gün sonra kendiliğinden silinsin
+  await env.QUOTA.put(key, String(n), { expirationTtl: 172800 });
+  return n;
+}
+
+async function checkQuota(request, env) {
+  const clientId = request.headers.get('X-CepAsistan-Client') || '';
+  if (!/^[a-f0-9]{32}$/.test(clientId)) {
+    return { error: json({ error: 'Geçersiz istemci kimliği.', code: 'BAD_CLIENT' }, 400) };
+  }
+  const limit = parseInt(env.FREE_LIMIT || '5', 10);
+  const ipLimit = parseInt(env.IP_LIMIT || '40', 10);
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const day = istanbulDate();
+  const clientKey = `c:${clientId}:${day}`;
+  const ipKey = `i:${ip}:${day}`;
+
+  const [used, ipUsed] = await Promise.all([readCount(env, clientKey), readCount(env, ipKey)]);
+  if (used >= limit || ipUsed >= ipLimit) {
+    return {
+      error: json(
+        { error: 'Bugünkü ücretsiz hakkın doldu.', code: 'DAILY_QUOTA_EXCEEDED', remainingToday: 0 },
+        429,
+      ),
+    };
+  }
+  return { clientKey, ipKey, used, limit };
+}
+
+async function callModel(env, { system, messages, maxTokens }) {
+  const provider = (env.AI_PROVIDER || 'anthropic').toLowerCase();
+  if (!env.AI_API_KEY) throw new Error('AI_API_KEY tanımlı değil');
+
+  if (provider === 'openai') {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.AI_API_KEY}` },
+      body: JSON.stringify({
+        model: env.AI_MODEL,
+        max_completion_tokens: maxTokens,
+        messages: [{ role: 'system', content: system }, ...messages],
+      }),
+    });
+    if (!res.ok) throw new Error(`openai ${res.status}`);
+    const data = await res.json();
+    return (data.choices?.[0]?.message?.content || '').trim();
+  }
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': env.AI_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: env.AI_MODEL || 'claude-haiku-5-5',
+      max_tokens: maxTokens,
+      system,
+      messages,
+    }),
+  });
+  if (!res.ok) throw new Error(`anthropic ${res.status}`);
+  const data = await res.json();
+  return (data.content || [])
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+    .trim();
+}
+
+function cleanMessages(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out = [];
+  for (const m of raw.slice(-MAX_MESSAGES)) {
+    if (!m || (m.role !== 'user' && m.role !== 'assistant')) return null;
+    if (typeof m.content !== 'string' || !m.content.trim()) return null;
+    out.push({ role: m.role, content: m.content.slice(0, MAX_CHARS) });
+  }
+  // Konuşma kullanıcı mesajıyla başlamalı ve onunla bitmeli
+  while (out.length && out[0].role !== 'user') out.shift();
+  if (!out.length || out[out.length - 1].role !== 'user') return null;
+  return out;
+}
+
+export function parseNoteJson(text) {
+  // Model bazen ```json ... ``` ile sarar; ilk { ile son } arasını al
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  let obj;
+  try {
+    obj = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  const summary = typeof obj.summary === 'string' ? obj.summary.trim() : '';
+  const tasks = Array.isArray(obj.tasks) ? obj.tasks : [];
+  const cleaned = [];
+  for (const t of tasks.slice(0, 8)) {
+    if (!t || typeof t.title !== 'string' || !t.title.trim()) continue;
+    let due = null;
+    if (typeof t.due === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t.due)) {
+      due = t.due.slice(0, 16);
+    }
+    cleaned.push({ title: t.title.trim().slice(0, 200), due });
+  }
+  if (!summary && cleaned.length === 0) return null;
+  return { summary, tasks: cleaned };
+}
+
+async function handleChat(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Geçersiz istek.', code: 'BAD_REQUEST' }, 400);
+  }
+  const messages = cleanMessages(body.messages);
+  if (!messages) return json({ error: 'Geçersiz mesaj listesi.', code: 'BAD_REQUEST' }, 400);
+
+  const q = await checkQuota(request, env);
+  if (q.error) return q.error;
+
+  let reply;
+  try {
+    reply = await callModel(env, { system: CHAT_SYSTEM, messages, maxTokens: 700 });
+  } catch (e) {
+    return json({ error: 'Yapay zekâ servisine ulaşılamadı. Biraz sonra tekrar dene.', code: 'UPSTREAM' }, 502);
+  }
+  if (!reply) return json({ error: 'Boş yanıt alındı.', code: 'EMPTY' }, 502);
+
+  // Hak yalnızca başarılı yanıttan sonra düşer
+  await Promise.all([bump(env, q.clientKey), bump(env, q.ipKey)]);
+  return json({ reply, remainingToday: Math.max(0, q.limit - (q.used + 1)) });
+}
+
+async function handleNote(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Geçersiz istek.', code: 'BAD_REQUEST' }, 400);
+  }
+  const note = typeof body.note === 'string' ? body.note.trim() : '';
+  if (note.length < 10) return json({ error: 'Not çok kısa.', code: 'BAD_REQUEST' }, 400);
+  const now = typeof body.now === 'string' ? body.now.slice(0, 16) : '';
+
+  const q = await checkQuota(request, env);
+  if (q.error) return q.error;
+
+  let text;
+  try {
+    text = await callModel(env, {
+      system: NOTE_SYSTEM,
+      messages: [{ role: 'user', content: `Şu anki zaman: ${now}\n\nNot:\n${note.slice(0, MAX_CHARS)}` }],
+      maxTokens: 600,
+    });
+  } catch (e) {
+    return json({ error: 'Yapay zekâ servisine ulaşılamadı. Biraz sonra tekrar dene.', code: 'UPSTREAM' }, 502);
+  }
+  const parsed = parseNoteJson(text);
+  if (!parsed) return json({ error: 'Yanıt işlenemedi, tekrar dene.', code: 'PARSE' }, 502);
+
+  await Promise.all([bump(env, q.clientKey), bump(env, q.ipKey)]);
+  return json({ ...parsed, remainingToday: Math.max(0, q.limit - (q.used + 1)) });
+}
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/health') return json({ status: 'ok' });
+    if (request.method !== 'POST') return json({ error: 'Bulunamadı.' }, 404);
+    if (url.pathname === '/chat') return handleChat(request, env);
+    if (url.pathname === '/note') return handleNote(request, env);
+    return json({ error: 'Bulunamadı.' }, 404);
+  },
+};
