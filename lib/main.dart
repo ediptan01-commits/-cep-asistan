@@ -26,6 +26,12 @@ const String aiEndpoint = String.fromEnvironment(
 const String monthlyProductId = 'cepasistan_pro_monthly';
 const String yearlyProductId = 'cepasistan_pro_yearly';
 
+// Ücretsiz günlük yapay zekâ hakkı. Sunucudaki FREE_LIMIT ile aynı olmalı.
+const int freeDailyLimit = 5;
+
+String get aiNoteEndpoint =>
+    aiEndpoint.replaceFirst(RegExp(r'/chat$'), '/note');
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -91,6 +97,327 @@ class CepAsistanApp extends StatelessWidget {
       ),
       home: const HomePage(),
     );
+  }
+}
+
+// --------------------------------------------------
+// YAPAY ZEKÂ İSTEMCİSİ
+// --------------------------------------------------
+
+class AiResult {
+  final Map<String, dynamic>? data;
+  final String? error;
+  final String? code;
+
+  const AiResult({this.data, this.error, this.code});
+
+  bool get ok => data != null;
+  bool get quotaExceeded => code == 'DAILY_QUOTA_EXCEEDED';
+}
+
+class AiClient {
+  static Future<AiResult> post(
+    String url,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final used = await Store.instance.prepareAiUsageToday();
+      if (used >= freeDailyLimit) {
+        return const AiResult(
+          error: 'Bugünkü ücretsiz hakkın doldu.',
+          code: 'DAILY_QUOTA_EXCEEDED',
+        );
+      }
+
+      if (url.contains('YOUR-SERVER')) {
+        return const AiResult(
+          error: 'Yapay zekâ sunucusu henüz yapılandırılmadı.',
+          code: 'NOT_CONFIGURED',
+        );
+      }
+
+      final clientId = await Store.instance.aiClientId();
+
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CepAsistan-Client': clientId,
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 45));
+
+      Map<String, dynamic>? data;
+      try {
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        if (decoded is Map) data = Map<String, dynamic>.from(decoded);
+      } catch (_) {}
+
+      if (response.statusCode == 200 && data != null) {
+        final remaining = data['remainingToday'];
+        final updated =
+            remaining is num ? freeDailyLimit - remaining.toInt() : used + 1;
+        await Store.instance
+            .setAiUsesToday(updated.clamp(0, freeDailyLimit).toInt());
+        return AiResult(data: data);
+      }
+
+      final code = data?['code']?.toString();
+      if (code == 'DAILY_QUOTA_EXCEEDED') {
+        await Store.instance.setAiUsesToday(freeDailyLimit);
+      }
+
+      final message = data?['error'] is String
+          ? data!['error'] as String
+          : 'Sunucu hatası (${response.statusCode}).';
+      return AiResult(error: message, code: code);
+    } on TimeoutException {
+      return const AiResult(
+        error: 'Yanıt zaman aşımına uğradı. Tekrar dene.',
+        code: 'TIMEOUT',
+      );
+    } catch (e) {
+      debugPrint('AI bağlantı hatası: $e');
+      return const AiResult(
+        error: 'Bağlantı kurulamadı. İnternetini kontrol et.',
+        code: 'NETWORK',
+      );
+    }
+  }
+}
+
+Future<void> showQuotaDialog(BuildContext context, VoidCallback onUpgrade) {
+  return showDialog<void>(
+    context: context,
+    useRootNavigator: true,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Günlük hakkın doldu'),
+      content: const Text(
+        'Ücretsiz sürümde günde $freeDailyLimit yapay zekâ hakkın var. '
+        'Yarın yenilenir. Daha fazlası için Pro’ya geçebilirsin.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('Tamam'),
+        ),
+        FilledButton(
+          onPressed: () {
+            Navigator.of(dialogContext).pop();
+            onUpgrade();
+          },
+          child: const Text('Pro’ya geç'),
+        ),
+      ],
+    ),
+  );
+}
+
+// --------------------------------------------------
+// TÜRKÇE TARİH/SAAT AYRIŞTIRICI (cihazda çalışır, API maliyeti yok)
+// --------------------------------------------------
+
+String formatDue(DateTime d) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(d.year, d.month, d.day);
+  final diff = day.difference(today).inDays;
+  final time =
+      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+  if (diff == 0) return 'bugün $time';
+  if (diff == 1) return 'yarın $time';
+  return '${d.day.toString().padLeft(2, '0')}.'
+      '${d.month.toString().padLeft(2, '0')}.${d.year} $time';
+}
+
+class ParsedTask {
+  final String title;
+  final DateTime? due;
+
+  const ParsedTask(this.title, this.due);
+}
+
+class TrDateParser {
+  static const String _l = r'(?<![\p{L}\d])';
+  static const String _r = r'(?![\p{L}\d])';
+  static const String _suf = r"['’]?(?:te|ta|de|da)";
+
+  static const Map<String, int> _weekdays = {
+    'pazartesi': 1,
+    'salı': 2,
+    'sali': 2,
+    'çarşamba': 3,
+    'carsamba': 3,
+    'perşembe': 4,
+    'persembe': 4,
+    'cuma': 5,
+    'cumartesi': 6,
+    'pazar': 7,
+  };
+
+  static ParsedTask parse(String input, DateTime now) {
+    var s = input.replaceAll('İ', 'i').replaceAll('I', 'ı').toLowerCase();
+    final spans = <List<int>>[];
+
+    void consume(RegExpMatch m) {
+      spans.add([m.start, m.end]);
+      s = s.substring(0, m.start) +
+          ' ' * (m.end - m.start) +
+          s.substring(m.end);
+    }
+
+    RegExpMatch? find(String pattern) =>
+        RegExp(pattern, unicode: true).firstMatch(s);
+
+    int? dayOffset;
+    int? hour;
+    var minute = 0;
+    String? part;
+    DateTime? rel;
+
+    // 1) "N dakika / saat / gün sonra"
+    var m = find(_l + r'(\d{1,3})\s*(dakika|dk|saat|gün|gun)\s+sonra' + _r);
+    if (m != null) {
+      final n = int.parse(m.group(1)!);
+      final unit = m.group(2)!;
+      consume(m);
+      if (unit == 'gün' || unit == 'gun') {
+        dayOffset = n;
+      } else {
+        rel = now.add(
+          unit == 'saat' ? Duration(hours: n) : Duration(minutes: n),
+        );
+      }
+    }
+
+    // 2) gün
+    if (rel == null && dayOffset == null) {
+      if ((m = find(_l + r'(öbür gün|obur gun|ertesi gün|ertesi gun)' + _r)) !=
+          null) {
+        consume(m!);
+        dayOffset = 2;
+      } else if ((m = find(_l + r'(yarın|yarin)' + _r)) != null) {
+        consume(m!);
+        dayOffset = 1;
+      } else if ((m = find(_l + r'(bugün|bugun)' + _r)) != null) {
+        consume(m!);
+        dayOffset = 0;
+      } else if ((m = find(_l +
+              r'(pazartesi|salı|sali|çarşamba|carsamba|perşembe|persembe|cumartesi|cuma|pazar)(?:\s+(?:günü|gunu|gün|gun))?' +
+              _r)) !=
+          null) {
+        consume(m!);
+        final target = _weekdays[m.group(1)!]!;
+        var diff = (target - now.weekday + 7) % 7;
+        if (diff == 0) diff = 7;
+        dayOffset = diff;
+      }
+    }
+
+    // 3) günün bölümü ("öğle yemeği" gibi isimler saat sayılmaz)
+    m = find(_l +
+        r'(öğleden sonra|ogleden sonra|sabah|öğlen|öğle|oglen|ogle|akşam|aksam|gece)' +
+        _r +
+        r'(?!\s+yeme[ğg]i)');
+    if (m != null) {
+      consume(m);
+      final w = m.group(1)!;
+      if (w.startsWith('öğleden') || w.startsWith('ogleden')) {
+        part = 'ogleden';
+      } else if (w == 'sabah') {
+        part = 'sabah';
+      } else if (w == 'gece') {
+        part = 'gece';
+      } else if (w.startsWith('ö') || w.startsWith('o')) {
+        part = 'ogle';
+      } else {
+        part = 'aksam';
+      }
+    }
+
+    // 4) saat
+    if (rel == null) {
+      final patterns = <String>[
+        _l + r'(?:saat\s+)?(\d{1,2})[:.](\d{2})' + '(?:$_suf)?' + _r,
+        _l + r'saat\s+(\d{1,2})(\s*bu[çc]uk)?' + '(?:$_suf)?' + _r,
+        _l + r'(\d{1,2})(\s*bu[çc]uk)?' + _suf + _r,
+      ];
+
+      int? h;
+      var mi = 0;
+      for (var i = 0; i < patterns.length && h == null; i++) {
+        final t = find(patterns[i]);
+        if (t == null) continue;
+        final hh = int.parse(t.group(1)!);
+        final mm = i == 0
+            ? int.parse(t.group(2)!)
+            : (t.group(2) != null ? 30 : 0);
+        if (hh > 23 || mm > 59) continue;
+        h = hh;
+        mi = mm;
+        consume(t);
+      }
+
+      if (h != null) {
+        var hr = h;
+        minute = mi;
+        if (part == 'aksam' || part == 'ogleden') {
+          if (hr < 12) hr += 12;
+        } else if (part == 'ogle') {
+          if (hr <= 6) hr += 12;
+        } else if (part == 'gece') {
+          if (hr == 12) {
+            hr = 0;
+          } else if (hr >= 6 && hr < 12) {
+            hr += 12;
+          }
+        } else if (part == 'sabah') {
+          // olduğu gibi
+        } else if (hr >= 1 && hr <= 6) {
+          hr += 12; // "3'te" -> 15:00
+        }
+        hour = hr;
+      }
+    }
+
+    DateTime? due;
+    if (rel != null) {
+      due = rel;
+    } else if (dayOffset != null || hour != null || part != null) {
+      var hr = hour;
+      if (hr == null) {
+        hr = switch (part) {
+          'sabah' => 8,
+          'ogle' => 12,
+          'ogleden' => 14,
+          'aksam' => 19,
+          'gece' => 22,
+          _ => 9,
+        };
+        minute = 0;
+      }
+      var base = DateTime(now.year, now.month, now.day, hr, minute);
+      if (dayOffset != null) {
+        base = DateTime(base.year, base.month, base.day + dayOffset, hr, minute);
+      } else if (!base.isAfter(now)) {
+        base = DateTime(base.year, base.month, base.day + 1, hr, minute);
+      }
+      due = base;
+    }
+
+    var title = input;
+    spans.sort((a, b) => b[0].compareTo(a[0]));
+    for (final sp in spans) {
+      title = '${title.substring(0, sp[0])} ${title.substring(sp[1])}';
+    }
+    title = title
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(RegExp(r'^[\s,.;:\-–]+|[\s,.;:\-–]+$'), '');
+    if (title.isEmpty) title = input.trim();
+
+    return ParsedTask(title, due);
   }
 }
 
@@ -394,23 +721,158 @@ class _HomePageState extends State<HomePage> {
   // GÖREV EKLEME
   // --------------------------------------------------
 
-  Future<void> _addTask() async {
-    final title = await _textDialog(
-      'Yeni görev',
-      'Örn. Faturayı öde',
-    );
-
-    if (!mounted || title == null || title.isEmpty) return;
-
-    tasks.insert(0, {
-      'id': DateTime.now().millisecondsSinceEpoch,
+  Future<void> _insertTask(String title, DateTime? due, {int salt = 0}) async {
+    final now = DateTime.now();
+    final id = now.millisecondsSinceEpoch + salt;
+    final task = <String, dynamic>{
+      'id': id,
       'title': title,
       'done': false,
-    });
+    };
 
+    if (due != null && due.isAfter(now)) {
+      final reminderId = id.remainder(2147483647);
+      final reminder = <String, dynamic>{
+        'id': reminderId,
+        'title': title,
+        'body': 'Görev zamanı geldi',
+        'when': due.toIso8601String(),
+      };
+      task['due'] = due.toIso8601String();
+      task['reminderId'] = reminderId;
+      reminders.add(reminder);
+
+      try {
+        await NotifyService.schedule(reminder);
+      } catch (e) {
+        debugPrint('Bildirim hatası: $e');
+      }
+    }
+
+    tasks.insert(0, task);
+  }
+
+  Future<void> _addTask() async {
+    final raw = await _textDialog(
+      'Yeni görev',
+      'Örn. yarın 3’te Ahmet’i ara',
+    );
+
+    if (!mounted || raw == null || raw.isEmpty) return;
+
+    final parsed = TrDateParser.parse(raw, DateTime.now());
+    final due = parsed.due;
+    final futureDue = due != null && due.isAfter(DateTime.now());
+
+    await _insertTask(parsed.title, due);
     await _saveAll();
 
-    if (mounted) _msg('Görev eklendi.');
+    if (!mounted) return;
+    if (futureDue) {
+      _msg('Görev eklendi. Hatırlatıcı: ${formatDue(due)}');
+    } else if (due != null) {
+      _msg('Görev eklendi. Zaman geçmiş olduğu için hatırlatıcı kurulmadı.');
+    } else {
+      _msg('Görev eklendi.');
+    }
+  }
+
+  // --------------------------------------------------
+  // NOTU YAPAY ZEKÂ İLE ÖZETLE VE GÖREV ÇIKAR
+  // --------------------------------------------------
+
+  Future<void> _aiNote(Map<String, dynamic> item) async {
+    final text =
+        '${item['title'] ?? ''}\n${item['body'] ?? ''}'.trim();
+
+    if (text.length < 10) {
+      _msg('Özetlemek için not çok kısa.');
+      return;
+    }
+
+    final used = await Store.instance.prepareAiUsageToday();
+    if (!mounted) return;
+
+    if (used >= freeDailyLimit) {
+      await showQuotaDialog(context, () => setState(() => tab = 7));
+      return;
+    }
+
+    showDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    final result = await AiClient.post(aiNoteEndpoint, {
+      'note': text,
+      'now': DateTime.now().toIso8601String(),
+    });
+
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    if (result.quotaExceeded) {
+      await showQuotaDialog(context, () => setState(() => tab = 7));
+      return;
+    }
+
+    if (!result.ok) {
+      _msg(result.error ?? 'Not işlenemedi.');
+      return;
+    }
+
+    final data = result.data!;
+    final summary =
+        data['summary'] is String ? (data['summary'] as String).trim() : '';
+    final suggestions = <Map<String, dynamic>>[];
+
+    if (data['tasks'] is List) {
+      for (final t in data['tasks'] as List) {
+        if (t is Map &&
+            t['title'] is String &&
+            (t['title'] as String).trim().isNotEmpty) {
+          suggestions.add({
+            'title': (t['title'] as String).trim(),
+            'due': t['due'] is String ? t['due'] : null,
+          });
+        }
+      }
+    }
+
+    final choice = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _NoteAiSheet(summary: summary, tasks: suggestions),
+    );
+
+    if (!mounted || choice == null) return;
+
+    if (choice['summary'] == true && summary.isNotEmpty) {
+      final old = (item['body']?.toString() ?? '').trimRight();
+      item['body'] =
+          old.isEmpty ? 'AI özeti: $summary' : '$old\n\nAI özeti: $summary';
+    }
+
+    var added = 0;
+    final picked = (choice['tasks'] as List? ?? const []).whereType<int>();
+    for (final index in picked) {
+      if (index < 0 || index >= suggestions.length) continue;
+      final due = DateTime.tryParse(suggestions[index]['due']?.toString() ?? '');
+      await _insertTask(
+        suggestions[index]['title'] as String,
+        due,
+        salt: added,
+      );
+      added++;
+    }
+
+    await _saveAll();
+    if (mounted) {
+      _msg(added > 0 ? '$added görev eklendi.' : 'Özet nota eklendi.');
+    }
   }
 
   // --------------------------------------------------
@@ -580,6 +1042,17 @@ class _HomePageState extends State<HomePage> {
       } catch (e) {
         debugPrint('Bildirim silme hatası: $e');
       }
+    } else if (identical(list, tasks) && item['reminderId'] is num) {
+      // Görev silinirse ona bağlı hatırlatıcı ve bildirim de silinir
+      final reminderId = (item['reminderId'] as num).toInt();
+      reminders.removeWhere(
+        (r) => r['id'] is num && (r['id'] as num).toInt() == reminderId,
+      );
+      try {
+        await NotifyService.cancel(reminderId);
+      } catch (e) {
+        debugPrint('Bildirim silme hatası: $e');
+      }
     }
 
     await _saveAll();
@@ -636,6 +1109,11 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+  }
+
+  String _taskSubtitle(Map<String, dynamic> item) {
+    final due = DateTime.tryParse(item['due']?.toString() ?? '');
+    return due == null ? '' : 'Hatırlatıcı: ${formatDue(due)}';
   }
 
   Widget _sectionTitle(String title, {String? action, VoidCallback? onAction}) {
@@ -1069,19 +1547,37 @@ Widget _listPage(
                           ?.toLocal()
                           .toString() ??
                       '')
-                : (item['body']?.toString() ?? ''),
+                : isTasks
+                    ? _taskSubtitle(item)
+                    : (item['body']?.toString() ?? ''),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
-          trailing: IconButton(
-            tooltip: 'Sil',
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () => _delete(
-              data,
-              index,
-              reminder: isReminders,
-            ),
-          ),
+          trailing: (!isTasks && !isReminders)
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: 'AI ile özetle ve görev çıkar',
+                      icon: const Icon(Icons.auto_awesome, color: navy),
+                      onPressed: () => _aiNote(item),
+                    ),
+                    IconButton(
+                      tooltip: 'Sil',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _delete(data, index),
+                    ),
+                  ],
+                )
+              : IconButton(
+                  tooltip: 'Sil',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () => _delete(
+                    data,
+                    index,
+                    reminder: isReminders,
+                  ),
+                ),
         ),
       );
     },
@@ -1373,7 +1869,10 @@ Widget _listPage(
                   _listPage(reminders, isReminders: true),
                   _budgetPage(),
                   const UnitConverterPage(),
-                  AiPage(onMessage: _msg),
+                  AiPage(
+                    onMessage: _msg,
+                    onUpgrade: () => setState(() => tab = 7),
+                  ),
                   ProPage(onMessage: _msg),
                   const CalculatorPage(),
                   _toolsPage(),
@@ -1835,10 +2334,12 @@ class _UnitConverterPageState extends State<UnitConverterPage> {
 
 class AiPage extends StatefulWidget {
   final void Function(String) onMessage;
+  final VoidCallback onUpgrade;
 
   const AiPage({
     super.key,
     required this.onMessage,
+    required this.onUpgrade,
   });
 
   @override
@@ -1851,6 +2352,22 @@ class _AiPageState extends State<AiPage> {
 
   bool busy = false;
 
+  int remaining = freeDailyLimit;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshRemaining();
+  }
+
+  Future<void> _refreshRemaining() async {
+    final used = await Store.instance.prepareAiUsageToday();
+    if (!mounted) return;
+    setState(() {
+      remaining = (freeDailyLimit - used).clamp(0, freeDailyLimit).toInt();
+    });
+  }
+
   Future<void> send() async {
     final message = input.text.trim();
 
@@ -1859,20 +2376,10 @@ class _AiPageState extends State<AiPage> {
     setState(() => busy = true);
     try {
       final used = await Store.instance.prepareAiUsageToday();
-      final clientId = await Store.instance.aiClientId();
       if (!mounted) return;
 
-      if (used >= 5) {
-        widget.onMessage(
-          'Bugünkü 5 mesaj hakkın doldu. Yarın tekrar deneyebilirsin.',
-        );
-        return;
-      }
-
-      if (aiEndpoint.contains('YOUR-SERVER')) {
-        widget.onMessage(
-          'Yapay zekâ sunucusu henüz yapılandırılmadı.',
-        );
+      if (used >= freeDailyLimit) {
+        await showQuotaDialog(context, widget.onUpgrade);
         return;
       }
 
@@ -1881,66 +2388,34 @@ class _AiPageState extends State<AiPage> {
         input.clear();
       });
 
-      final response = await http
-          .post(
-            Uri.parse(aiEndpoint),
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CepAsistan-Client': clientId,
-            },
-            body: jsonEncode({
-              'messages': history
-                  .map((item) => {
-                        'role': item['role'],
-                        'content': item['content'],
-                      })
-                  .toList(),
-            }),
-          )
-          .timeout(const Duration(seconds: 45));
+      final result = await AiClient.post(aiEndpoint, {
+        'messages': history
+            .map((item) => {
+                  'role': item['role'],
+                  'content': item['content'],
+                })
+            .toList(),
+      });
 
       if (!mounted) return;
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+      final reply = result.data?['reply'];
 
-        if (data is Map &&
-            data['reply'] is String &&
-            (data['reply'] as String).trim().isNotEmpty) {
-          history.add({
-            'role': 'assistant',
-            'content': data['reply'] as String,
-          });
-          final remaining = data['remainingToday'];
-          final updatedUsage = remaining is num ? 5 - remaining.toInt() : used + 1;
-          await Store.instance.setAiUsesToday(updatedUsage.clamp(0, 5).toInt());
-        } else {
-          history.add({
-            'role': 'assistant',
-            'content': 'Sunucudan okunabilir bir yanıt alınamadı.',
-          });
-        }
+      if (result.ok && reply is String && reply.trim().isNotEmpty) {
+        history.add({'role': 'assistant', 'content': reply});
+      } else if (result.quotaExceeded) {
+        // Cevaplanmayan mesajı geri al
+        history.removeLast();
+        input.text = message;
+        await showQuotaDialog(context, widget.onUpgrade);
       } else {
-        String errorMessage = 'Sunucu hatası (${response.statusCode}).';
-        try {
-          final data = jsonDecode(response.body);
-          if (data is Map && data['error'] is String) {
-            errorMessage = data['error'] as String;
-          }
-          if (data is Map && data['code'] == 'DAILY_QUOTA_EXCEEDED') {
-            await Store.instance.setAiUsesToday(5);
-          }
-        } catch (_) {}
-        history.add({'role': 'assistant', 'content': errorMessage});
-      }
-    } catch (e) {
-      if (mounted) {
         history.add({
           'role': 'assistant',
-          'content': 'Bağlantı kurulamadı. İnternetini ve sunucu adresini kontrol et.',
+          'content': result.error ?? 'Sunucudan okunabilir bir yanıt alınamadı.',
         });
       }
-      debugPrint('AI bağlantı hatası: $e');
+
+      await _refreshRemaining();
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -2074,7 +2549,7 @@ class _AiPageState extends State<AiPage> {
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => send(),
                     decoration: InputDecoration(
-                      hintText: 'CepAsistan’a bir şey sor...',
+                      hintText: 'Bir şey sor · $remaining hak kaldı',
                       filled: true,
                       fillColor: Colors.white,
                       contentPadding: const EdgeInsets.symmetric(
@@ -2330,5 +2805,119 @@ class _ProPageState extends State<ProPage> {
         ),
       ],
     );
+  }
+}
+
+// --------------------------------------------------
+// NOT İÇİN YAPAY ZEKÂ ÖNERİ PENCERESİ
+// --------------------------------------------------
+
+class _NoteAiSheet extends StatefulWidget {
+  final String summary;
+  final List<Map<String, dynamic>> tasks;
+
+  const _NoteAiSheet({
+    required this.summary,
+    required this.tasks,
+  });
+
+  @override
+  State<_NoteAiSheet> createState() => _NoteAiSheetState();
+}
+
+class _NoteAiSheetState extends State<_NoteAiSheet> {
+  late final List<bool> selected =
+      List<bool>.filled(widget.tasks.length, true);
+  bool saveSummary = true;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasSummary = widget.summary.isNotEmpty;
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          0,
+          20,
+          16 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'AI özeti',
+                style: TextStyle(
+                  color: navy,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                hasSummary ? widget.summary : 'Özet çıkarılamadı.',
+                style: const TextStyle(height: 1.4),
+              ),
+              if (hasSummary)
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: saveSummary,
+                  title: const Text('Özeti nota ekle'),
+                  onChanged: (v) => setState(() => saveSummary = v == true),
+                ),
+              const SizedBox(height: 8),
+              const Text(
+                'Bulunan görevler',
+                style: TextStyle(
+                  color: navy,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              if (widget.tasks.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text('Notta görev bulunamadı.'),
+                )
+              else
+                for (var i = 0; i < widget.tasks.length; i++)
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: selected[i],
+                    title: Text(widget.tasks[i]['title'] as String),
+                    subtitle: _dueText(widget.tasks[i]['due']),
+                    onChanged: (v) => setState(() => selected[i] = v == true),
+                  ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () {
+                    Navigator.of(context).pop(<String, dynamic>{
+                      'summary': hasSummary && saveSummary,
+                      'tasks': [
+                        for (var i = 0; i < selected.length; i++)
+                          if (selected[i]) i,
+                      ],
+                    });
+                  },
+                  child: const Text('Uygula'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget? _dueText(Object? raw) {
+    final due = DateTime.tryParse(raw?.toString() ?? '');
+    if (due == null) return null;
+    return Text('Hatırlatıcı: ${formatDue(due)}');
   }
 }
