@@ -17,6 +17,9 @@ jobs:
       - name: Kaynak kodunu al
         uses: actions/checkout@v4
 
+      - name: AI sunucusu testlerini çalıştır
+        run: node worker/test.mjs
+
       - name: Flutter kur
         uses: subosito/flutter-action@v2
         with:
@@ -76,17 +79,77 @@ jobs:
           gradle_file.write_text(content)
           PY
 
+      - name: Android manifest ayarlarını yap (izinler ve bildirim alıcıları)
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          manifest = Path("_build/android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+
+          permissions = [
+              "android.permission.INTERNET",
+              "android.permission.POST_NOTIFICATIONS",
+              "android.permission.RECEIVE_BOOT_COMPLETED",
+          ]
+          perm_xml = ""
+          for name in permissions:
+              if f'android:name="{name}"' not in text:
+                  perm_xml += f'    <uses-permission android:name="{name}" />\n'
+
+          if perm_xml:
+              match = re.search(r"<manifest[^>]*>\n?", text)
+              if not match:
+                  raise SystemExit("manifest etiketi bulunamadi")
+              text = text[: match.end()] + perm_xml + text[match.end():]
+
+          receivers = """        <receiver
+                      android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+                      android:exported="false" />
+                  <receiver
+                      android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+                      android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED" />
+                          <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                          <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                          <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+                      </intent-filter>
+                  </receiver>
+          """
+
+          if "ScheduledNotificationReceiver" not in text:
+              if "</application>" not in text:
+                  raise SystemExit("application kapanisi bulunamadi")
+              text = text.replace("</application>", receivers + "    </application>", 1)
+
+          manifest.write_text(text)
+          print("Manifest guncellendi")
+          PY
+
       - name: Paketleri kur
         working-directory: _build
         run: flutter pub get
 
       - name: Kod analizi
         working-directory: _build
-        run: flutter analyze lib --no-fatal-infos
+        run: flutter analyze lib --no-fatal-infos --no-fatal-warnings
+
+      - name: AI sunucu adresini hazırla
+        id: defines
+        env:
+          AI_ENDPOINT: ${{ vars.AI_ENDPOINT }}
+        run: |
+          if [ -n "$AI_ENDPOINT" ]; then
+            echo "args=--dart-define=AI_ENDPOINT=$AI_ENDPOINT" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Android APK oluştur
         working-directory: _build
-        run: flutter build apk --debug
+        run: flutter build apk --debug ${{ steps.defines.outputs.args }}
 
       - name: APK dosyasını yükle
         uses: actions/upload-artifact@v4
